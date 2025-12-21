@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Leo System Command – leo
+================================================
+Version: 1.7
+
+Purpose:
+- Single entrypoint for operating the Leo system
+- Canonical operator interface
+- Enforces SOURCE → INSTALL workflow (no direct /usr/local/bin edits)
+
+Key Rules:
+- Edit files ONLY in ~/leo/bin
+- Install changes via `leo install`
+- /usr/local/bin is runtime-only
+
+New in 1.7:
+- Fixed edit workflow (opens ~/leo/bin)
+- Added `leo install`
+- Hardened operator mental model
+"""
+
+import sys
+import subprocess
+from datetime import datetime
+from shutil import which
+from pathlib import Path
+
+# ============================================================
+# Paths
+# ============================================================
+
+LEO_SRC = Path.home() / "leo" / "bin"
+
+EDITABLE_FILES = {
+    "mes-run": LEO_SRC / "mes-run",
+    "leo":     LEO_SRC / "leo",
+}
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def run(cmd: str):
+    subprocess.run(cmd, shell=True)
+
+def red(text: str):
+    print(f"\033[91m{text}\033[0m")
+
+def green(text: str):
+    print(f"\033[92m{text}\033[0m")
+
+def header():
+    print("\n=== LEO SYSTEM ===")
+    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+def has_cmd(cmd: str) -> bool:
+    return which(cmd) is not None
+
+def open_editor(path: Path):
+    if not path.exists():
+        red(f"File not found: {path}")
+        return
+
+    if has_cmd("code"):
+        run(f"code {path}")
+    elif has_cmd("vim"):
+        run(f"vim {path}")
+    elif has_cmd("nano"):
+        run(f"nano {path}")
+    else:
+        red("No suitable editor found (code/vim/nano)")
+
+def confirm(prompt: str) -> bool:
+    while True:
+        r = input(f"{prompt} (y/n): ").lower().strip()
+        if r in ("y", "yes"):
+            return True
+        if r in ("n", "no"):
+            return False
+        print("Please answer y or n.")
+
+# ============================================================
+# Usage
+# ============================================================
+
+def usage():
+    header()
+    print("Available commands:\n")
+    print("  leo status        System overview")
+    print("  leo logs          View logs (sub-menu)")
+    print("  leo edit          Edit source files")
+    print("  leo install       Install Leo operator tools")
+    print("  leo mes           MES operator")
+    print("  leo update        System updates")
+    print("  leo reboot        Reboot system\n")
+    sys.exit(0)
+
+# ============================================================
+# Status
+# ============================================================
+
+def status():
+    header()
+    print("Host: Leo\n")
+    run("uptime")
+    print("")
+    run("df -h / | tail -n 1")
+    print("")
+    run("systemctl --failed || true")
+
+# ============================================================
+# Logs
+# ============================================================
+
+def logs():
+    header()
+    print("Log streams:\n")
+    print("  leo logs mining")
+    print("  leo logs mes")
+    print("  leo logs pnl")
+    print("  leo logs pnl-summary")
+    print("  leo logs system")
+    print("  leo logs auth\n")
+
+def logs_target(target: str):
+    header()
+
+    if target == "mining":
+        run("sudo journalctl -fu monerod -fu xmrig -fu p2pool")
+
+    elif target == "mes":
+        run("journalctl -fu mes_auto_live.service &")
+        run("tail -f /mnt/mes/mes.log")
+
+    elif target == "pnl":
+        run("grep -E '\"pl\":\"-[0-9]|\"pl\":\"[1-9]' /mnt/mes/mes.log | tail -n 50")
+
+    elif target == "pnl-summary":
+        run(
+            "grep -E '\"pl\":\"-[0-9]|\"pl\":\"[1-9]' /mnt/mes/mes.log "
+            "| jq -r '.orderFillTransaction.pl // empty' "
+            "| awk \"{ "
+            "pl=\\$1; total+=pl; count++; "
+            "if (pl>0){wins++; win_sum+=pl} "
+            "else if (pl<0){losses++; loss_sum+=pl} "
+            "} END { "
+            "printf \\\"Trades:   %d\\\\n\\\", count; "
+            "printf \\\"Wins:     %d\\\\n\\\", wins; "
+            "printf \\\"Losses:   %d\\\\n\\\", losses; "
+            "printf \\\"Net P/L:  %.2f\\\\n\\\", total; "
+            "if (wins>0) printf \\\"Avg Win:  %.2f\\\\n\\\", win_sum/wins; "
+            "if (losses>0) printf \\\"Avg Loss: %.2f\\\\n\\\", loss_sum/losses; "
+            "}\""
+        )
+
+    elif target == "system":
+        run("journalctl -p err..alert -b")
+
+    elif target == "auth":
+        run("journalctl -u ssh -u sudo")
+
+    else:
+        red(f"Unknown log target: {target}")
+        logs()
+
+# ============================================================
+# Edit
+# ============================================================
+
+def edit():
+    header()
+    print("Editable SOURCE files (~/leo/bin):\n")
+    for k in EDITABLE_FILES:
+        print(f"  leo edit {k}")
+    print("")
+
+def edit_target(target: str):
+    if target not in EDITABLE_FILES:
+        red(f"Unknown edit target: {target}")
+        edit()
+        return
+
+    open_editor(EDITABLE_FILES[target])
+
+# ============================================================
+# Install
+# ============================================================
+
+def install():
+    header()
+    installer = LEO_SRC / "leo-install"
+
+    if not installer.exists():
+        red("leo-install not found in ~/leo/bin")
+        return
+
+    print("Installing Leo operator tools...\n")
+    run(str(installer))
+    green("\n✔ Installation complete")
+
+# ============================================================
+# System
+# ============================================================
+
+def update():
+    header()
+    run("sudo apt update")
+    run("sudo apt upgrade -y")
+    run("sudo apt autoremove -y")
+    print("\nアップデート完了 😺")
+
+def reboot():
+    header()
+    if confirm("Reboot Leo now?"):
+        run("sudo reboot")
+
+# ============================================================
+# MES
+# ============================================================
+
+def mes():
+    if len(sys.argv) > 2:
+        run(f"mes-run {' '.join(sys.argv[2:])}")
+    else:
+        run("mes-run status")
+
+# ============================================================
+# Entrypoint
+# ============================================================
+
+if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        usage()
+
+    cmd = sys.argv[1].lower()
+
+    if cmd in ("help", "-h", "--help"):
+        usage()
+
+    elif cmd == "status":
+        status()
+
+    elif cmd == "logs":
+        if len(sys.argv) == 2:
+            logs()
+        elif len(sys.argv) == 3:
+            logs_target(sys.argv[2].lower())
+        else:
+            usage()
+
+    elif cmd == "edit":
+        if len(sys.argv) == 2:
+            edit()
+        elif len(sys.argv) == 3:
+            edit_target(sys.argv[2].lower())
+        else:
+            usage()
+
+    elif cmd == "install":
+        install()
+
+    elif cmd == "update":
+        update()
+
+    elif cmd == "reboot":
+        reboot()
+
+    elif cmd == "mes":
+        mes()
+
+    else:
+        red(f"Unknown command: {cmd}")
+        usage()
