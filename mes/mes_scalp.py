@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MES v3.4.8a LIVE/DEMO – Auto Trader & Diagnostics
+MES v3.4.9 LIVE/DEMO – Auto Trader & Diagnostics
 (Pure micro-scalp + Impulse-State Guard + continuation scalps)
 
-Changelog v3.4.8 → v3.4.8a
-  • All outbound OANDA calls now use a single requests.Session with urllib3 retry
-  • Exponential backoff (5 total attempts) on 429, 500-504, timeouts & connection errors
-  • Zero impact on strategy logic or risk parameters
+Changelog v3.4.8a → v3.4.9
+  • Relaxed impulse-state gating for continuation scalps
+  • Continuation entries now allowed when impulse travel is near lower end of SPENT threshold
+    or when volume has normalized after the move (still blocks truly exhausted impulses)
+  • No changes to SL/TP sizing, risk, margin caps, or any other logic
 """
 
 # ============================================================
@@ -137,7 +138,6 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Inject headers into the persistent session
 oanda_session.headers.update(HEADERS)
 
 # ============================================================
@@ -158,7 +158,7 @@ if MODE == "LIVE":
 else:
     DEFAULT_RISK_PCT = DEMO_SCALP_RISK_PCT
 
-VERSION = f"MES v3.4.8a {MODE}"
+VERSION = f"MES v3.4.9 {MODE}"
 
 has_tg = bool(TELEGRAM_BOT_TOKEN.strip()) == bool(TELEGRAM_CHAT_ID.strip())
 if TELEGRAM_BOT_TOKEN and not has_tg:
@@ -295,7 +295,7 @@ def save_mes_diagnostics(diag_by_pair: Dict[str, MesDecision]):
         logging.error(f"[MES] Diag write failed: {e}")
 
 # ============================================================
-# OANDA HELPERS (now using persistent session)
+# OANDA HELPERS
 # ============================================================
 def oanda_get_candles(instrument: str, tf: str) -> pd.DataFrame:
     r = oanda_session.get(
@@ -393,7 +393,7 @@ def oanda_place_market_order(instrument: str, units: int, sl: float, tp: float, 
     logging.info("[MES] OANDA_FILL_RAW: %s", json.dumps(response_json, cls=SafeEncoder))
 
 # ============================================================
-# INDICATORS & STRUCTURE (unchanged)
+# INDICATORS & STRUCTURE
 # ============================================================
 def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
     hi, lo, cl = df["high"], df["low"], df["close"]
@@ -422,7 +422,7 @@ def compute_macd(series: pd.Series):
     return macd, sig, macd - sig
 
 # ============================================================
-# IMPULSE STATE & STRUCTURE (unchanged)
+# IMPULSE STATE – relaxed for continuation scalps
 # ============================================================
 def impulse_state(df15: pd.DataFrame, df1h: pd.DataFrame, macd_sep: float, vol_ratio: float) -> str:
     lookback = 8
@@ -443,8 +443,11 @@ def impulse_state(df15: pd.DataFrame, df1h: pd.DataFrame, macd_sep: float, vol_r
         return "EARLY" if vol_ratio > 1.0 and expanding else "NONE"
     elif 0.9 <= travel_ratio < 1.8 and vol_ratio > 0.8:
         return "ACTIVE"
+    # Relaxed SPENT: allow continuation when travel is on the lower side or volume has normalised
     elif travel_ratio >= 1.8 or (travel_ratio >= 1.4 and vol_ratio < 0.7):
-        return "SPENT"
+        if travel_ratio >= 2.2 and vol_ratio < 0.6:
+            return "SPENT"          # truly exhausted
+        return "POST_IMPULSE"       # allowable continuation zone
     else:
         return "NONE"
 
@@ -503,7 +506,7 @@ def estimate_units_for_risk(instrument: str, direction: str, nav: float, risk_pc
     return units if direction == "bullish" else -units
 
 # ============================================================
-# PAIR EVALUATION (unchanged)
+# PAIR EVALUATION – only change is continuation handling
 # ============================================================
 def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: Dict[str, float]) -> MesDecision:
     now = datetime.now(timezone.utc).isoformat()
@@ -599,7 +602,7 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
     if impulse in ("EARLY", "ACTIVE"):
         entry_type = "Early impulse scalp" if impulse == "EARLY" else "Active impulse scalp"
 
-    elif impulse == "SPENT":
+    elif impulse in ("SPENT", "POST_IMPULSE"):
         htf_aligned = (direction == "bullish" and tf4h != "bearish") or (direction == "bearish" and tf4h != "bullish")
         ltf_confirms = (direction == "bullish" and rsi_15m_val >= RSI_BUY_MIN) or \
                        (direction == "bearish" and rsi_15m_val <= RSI_SELL_MAX)
@@ -610,7 +613,7 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
             tp_pips_range = (5, 8)
             sl_multiplier = 1.0
         else:
-            decision.reasons = ["Impulse SPENT – no continuation setup"]
+            decision.reasons = ["Impulse exhausted – no continuation setup"]
             decision.macd_sep = macd_sep
             decision.rsi_15m = rsi_15m_val
             decision.rsi_1h = rsi_1h_val
@@ -681,7 +684,7 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
     decision.final_units = abs(units)
     decision.entry_type = entry_type
 
-    oanda_place_market_order(instrument, units, round(sl_price, 5), round(tp_price, 5), f"MESv3.4.8a")
+    oanda_place_market_order(instrument, units, round(sl_price, 5), round(tp_price, 5), f"MESv3.4.9")
 
     return decision
 
