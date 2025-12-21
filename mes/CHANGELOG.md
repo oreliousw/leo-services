@@ -1,3 +1,4 @@
-## v0.0.1
-- Initial test entry for AI-GENT commit validation
-
+## v3.4.9
+- Relaxed impulse gating for continuation scalps
+- Improved acceptance of post-impulse continuation entries
+- No changes to SL/TP, risk model, sessions, or diagnostics
