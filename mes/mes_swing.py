@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MES Swing v1.1.1a – Higher-Timeframe Swing Trader
+MES Swing v3.4.10 – Higher-Timeframe Swing Trader
 Enhancement #1: Deterministic 1:2 R:R using 3.0 × ATR TP (random TP removed)
 Enhancement #2: Transport-layer reliability – single requests.Session with urllib3 retry + exponential backoff
-Location: /opt/mes/swing-v1.1.py
+Location: /opt/mes/mes_swing.py
 """
 
 import argparse
@@ -82,13 +82,13 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", config.get("TELEGRAM_CHAT_ID"
 HEADERS = {"Authorization": f"Bearer {OANDA_API_TOKEN}", "Content-Type": "application/json"}
 
 # ============================================================
-# SINGLE SESSION WITH RETRY (v1.1.1a change)
+# SINGLE SESSION WITH RETRY (v3.4.10)
 # ============================================================
 retry_strategy = Retry(
     total=5,
     backoff_factor=0.5,
     status_forcelist=[429, 500, 502, 503, 504],
-    allowed_methods=None,  # retry on all methods (GET/POST)
+    allowed_methods=None,
     raise_on_status=False,
 )
 adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -117,10 +117,9 @@ if IS_LIVE and not LIVE_ALLOWED:
         logging.error(f"Failed to send safety abort TG message: {e}")
     sys.exit(1)
 
-TAG = "MES_SWING_LIVE_v1" if IS_LIVE else "MES_SWING_DEMO_v1"
-VERSION = f"MES Swing v1.1.1a {MODE} [{TAG}]"
+TAG = "MES_SWING_LIVE_v3" if IS_LIVE else "MES_SWING_DEMO_v3"
+VERSION = f"MES Swing v3.4.10 {MODE} [{TAG}]"
 
-# Risk & margin caps
 RISK_PCT = float(os.getenv("SWING_RISK_PCT_LIVE", "0.0025")) if IS_LIVE else float(os.getenv("SWING_RISK_PCT_DEMO", "0.02"))
 MAX_MARGIN_FRAC = float(os.getenv("SWING_MAX_MARGIN_FRAC_LIVE", "0.10")) if IS_LIVE else float(os.getenv("SWING_MAX_MARGIN_FRAC_DEMO", "0.20"))
 MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "2"))
@@ -236,17 +235,14 @@ def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optiona
         tg(f"{pair} data error → skipped")
         return None
 
-    # Daily bias
     daily_rsi = rsi(df_d["close"]).iloc[-1]
     if not (daily_rsi > 55 or daily_rsi < 45):
         return None
 
-    # 4H trend
     ema50_4h = df_4h["close"].ewm(span=50, adjust=False).mean().iloc[-1]
     price_4h = df_4h["close"].iloc[-1]
     trend = "bullish" if price_4h > ema50_4h else "bearish"
 
-    # 1H pullback
     rsi_1h = rsi(df_1h["close"]).iloc[-1]
     if trend == "bullish" and rsi_1h < 45:
         direction = "BUY"
@@ -259,9 +255,7 @@ def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optiona
     atr_val = atr(df_1h)
     pip_size = oanda_pip_value(pair)
 
-    # SL = 1.5 × ATR (unchanged)
     sl_pips = 1.5 * (atr_val / pip_size)
-    # TP = 3.0 × ATR → fixed 1:2 risk:reward
     tp_pips = 3.0 * (atr_val / pip_size)
 
     sl_price = entry - sl_pips * pip_size if direction == "BUY" else entry + sl_pips * pip_size
@@ -275,7 +269,6 @@ def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optiona
     if units_raw == 0:
         return None
 
-    # Margin cap check
     est_margin = abs(units_raw) * entry / ASSUMED_LEVERAGE
     margin_allowed = nav * MAX_MARGIN_FRAC
     margin_cap_applied = est_margin > margin_allowed
@@ -372,7 +365,7 @@ def main():
         if dec:
             place_order(dec)
             trades += 1
-            open_pos[pair] = dec.units_final  # fake occupancy this cycle
+            open_pos[pair] = dec.units_final
 
     tg(f"<b>{VERSION}</b> cycle complete – {trades} swing order(s) submitted")
     logging.info(f"[SWING] Cycle done – {trades} trades")
