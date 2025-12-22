@@ -107,11 +107,14 @@ MODE = "LIVE" if IS_LIVE else "DEMO" if IS_DEMO else "UNKNOWN"
 if IS_LIVE and not LIVE_ALLOWED:
     msg = "LIVE account detected but --allow-live flag OR MES_SWING_ARMED=YES missing – refusing to run"
     logging.error(msg)
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": f"SWING SAFETY ABORT: {msg}"},
-        timeout=10,
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": f"SWING SAFETY ABORT: {msg}"},
+            timeout=10,
+        )
+    except Exception as e:
+        logging.error(f"Failed to send safety abort TG message: {e}")
     sys.exit(1)
 
 TAG = "MES_SWING_LIVE_v1" if IS_LIVE else "MES_SWING_DEMO_v1"
@@ -147,7 +150,7 @@ def tg(msg: str):
 
 def save_diag(diag: dict):
     try:
-        DIAG_PATH.write_text(json.dumps(diag, cls=SafeEncoder, indent=2))
+        DIAG_PATH.write_text(json.dumps(diag, indent=2))
     except: pass
 
 # ============================================================
@@ -328,7 +331,7 @@ def place_order(dec: SwingDecision):
     tg(msg)
 
     diag = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "pair": dec.pair,
         "direction": side,
         "units_raw": dec.units_raw,
