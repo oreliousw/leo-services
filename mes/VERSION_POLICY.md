@@ -1,22 +1,10 @@
-decision_table:
-  risk_model_rewrite: MAJOR
-  strategy_behavior: MINOR
-  execution_logic: PATCH
-  diagnostics_logging: PATCH
-  infrastructure: PATCH
-  hotfix_critical: SUFFIX
-
-overrides:
-  - when: [strategy_behavior, hotfix_critical]
-    then: SUFFIX
-
 # MES Versioning Policy
 
 This document defines the official, machine-enforceable versioning policy for the Market Execution System (MES) used by the Leo trading stack.
 
 ## Version Format
 Versions follow the pattern:  
-`vMAJOR.MINOR.PATCH[suffix]`  
+`vMAJOR.MINOR.PATCH[suffix]`
 
 - `MAJOR`, `MINOR`, `PATCH`: positive integers  
 - `suffix`: optional lowercase letter `a`–`z` (hotfix identifier)
@@ -47,7 +35,7 @@ When multiple change categories are declared in a single commit, AI-GENT **must*
 unless an explicit override applies.
 
 ## Enforcement Requirements for AI-GENT
-- Change categories **must** be explicitly declared by the producing agent (never inferred)
+- Change categories **must** be explicitly declared (never inferred)
 - AI-GENT calculates `version_to` automatically from current version + declared categories
 - AI-GENT enforces strictly monotonic version progression
 - AI-GENT blocks commits where categories do not justify the version bump
