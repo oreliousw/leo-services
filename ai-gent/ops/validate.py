@@ -1,185 +1,122 @@
+#!/usr/bin/env python3
 """
-Validation logic for AI-GENT
-Enforces AI_RULES.md and VERSION_POLICY.md invariants
+AI-GENT Validator — v2.0
+-----------------------
+Implements AI_RULES.md v2.0
+
+Design principles:
+- Branch validation by `type`
+- Parameter changes are lightweight
+- Logic changes are explicit and versioned
+- Fail fast, fail once, fail clearly
 """
 
 from pathlib import Path
-import ast
-import re
+import yaml
+import sys
 
-
-REPO_ROOT = Path.home() / "leo-services"
-MES_DIR = REPO_ROOT / "mes"
-POLICY_FILE = MES_DIR / "VERSION_POLICY.md"
-CHANGELOG_FILE = MES_DIR / "CHANGELOG.md"
-
-
-class ValidationError(Exception):
-    pass
-
-
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Helpers
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------
 
-def require_fields(update, fields):
-    for f in fields:
-        if f not in update:
-            raise ValidationError(f"Missing required field: {f}")
+def fail(msg: str):
+    raise ValueError(msg)
 
 
-def parse_version(version: str):
-    """
-    vMAJOR.MINOR.PATCH[suffix]
-    """
-    m = re.match(r"v(\d+)\.(\d+)\.(\d+)([a-z]?)$", version)
-    if not m:
-        raise ValidationError(f"Invalid version format: {version}")
-    major, minor, patch, suffix = m.groups()
-    return int(major), int(minor), int(patch), suffix or None
+def require(data: dict, field: str):
+    if field not in data:
+        fail(f"Missing required field: {field}")
 
 
-def format_version(major, minor, patch, suffix=None):
-    v = f"v{major}.{minor}.{patch}"
-    if suffix:
-        v += suffix
-    return v
+def load_yaml(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text())
+    except Exception as e:
+        fail(f"Invalid YAML: {e}")
 
 
-# ------------------------------------------------------------
-# VERSION POLICY
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Validation logic
+# ---------------------------------------------------------------------
 
-def load_version_policy():
-    if not POLICY_FILE.exists():
-        raise ValidationError("VERSION_POLICY.md not found")
+def validate_parameter_change(doc: dict):
+    required = [
+        "type",
+        "target_file",
+        "parameter",
+        "change",
+        "timestamp",
+        "statement",
+    ]
 
-    text = POLICY_FILE.read_text()
+    for field in required:
+        require(doc, field)
 
-    table = {}
-    overrides = []
+    if not isinstance(doc["change"], dict):
+        fail("Field 'change' must be a mapping")
 
-    in_table = False
-    in_overrides = False
+    for sub in ("from", "to"):
+        if sub not in doc["change"]:
+            fail(f"Missing change.{sub}")
 
-    for line in text.splitlines():
-        line = line.strip()
-
-        if line.startswith("decision_table:"):
-            in_table = True
-            continue
-        if line.startswith("overrides:"):
-            in_overrides = True
-            in_table = False
-            continue
-
-        if in_table and ":" in line:
-            k, v = line.split(":", 1)
-            table[k.strip()] = v.strip().upper()
-
-        if in_overrides and line.startswith("- when:"):
-            categories = line.split("[", 1)[1].split("]")[0]
-            categories = [c.strip() for c in categories.split(",")]
-            overrides.append({"when": categories})
-
-        if in_overrides and line.startswith("then:"):
-            overrides[-1]["then"] = line.split(":", 1)[1].strip().upper()
-
-    return table, overrides
+    return True
 
 
-def compute_version(version_from, categories):
-    major, minor, patch, suffix = parse_version(version_from)
+def validate_logic_change(doc: dict):
+    required = [
+        "type",
+        "target_file",
+        "tagline",
+        "version",
+    ]
 
-    decision_table, overrides = load_version_policy()
+    for field in required:
+        require(doc, field)
 
-    increments = set()
-    for cat in categories:
-        if cat not in decision_table:
-            raise ValidationError(f"Unknown change category: {cat}")
-        increments.add(decision_table[cat])
+    version = doc["version"]
+    if not isinstance(version, dict):
+        fail("Field 'version' must be a mapping")
 
-    # Apply override rules first
-    for rule in overrides:
-        if all(c in categories for c in rule["when"]):
-            increments = {rule["then"]}
+    for sub in ("from", "to"):
+        if sub not in version:
+            fail(f"Missing version.{sub}")
 
-    # Collapse precedence
-    if "MAJOR" in increments:
-        return format_version(major + 1, 0, 0)
-    if "MINOR" in increments:
-        return format_version(major, minor + 1, 0)
-    if "PATCH" in increments:
-        return format_version(major, minor, patch + 1)
-    if "SUFFIX" in increments:
-        next_suffix = "a" if not suffix else chr(ord(suffix) + 1)
-        return format_version(major, minor, patch, next_suffix)
-
-    raise ValidationError("Unable to determine version increment")
+    return True
 
 
-# ------------------------------------------------------------
-# VALIDATORS
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------
 
-def validate_changelog(version):
-    if not CHANGELOG_FILE.exists():
-        raise ValidationError("CHANGELOG.md not found in mes/ directory")
+def validate(path: Path):
+    doc = load_yaml(path)
 
-    if version not in CHANGELOG_FILE.read_text():
-        raise ValidationError(
-            f"CHANGELOG.md missing entry for version {version}"
-        )
+    if not isinstance(doc, dict):
+        fail("Top-level YAML must be a mapping")
 
+    require(doc, "type")
+    require(doc, "target_file")
 
-def validate_file_scope(update):
-    require_fields(update, ["target_file"])
+    change_type = doc["type"]
 
-    allowed = {
-        "mes_scalp.py": MES_DIR / "mes_scalp.py",
-        "mes_swing.py": MES_DIR / "mes_swing.py",
-        "mes-run": MES_DIR / "mes-run",
-    }
+    if change_type == "parameter":
+        validate_parameter_change(doc)
+    elif change_type == "logic":
+        validate_logic_change(doc)
+    else:
+        fail(f"Unknown change type: {change_type}")
 
-    target = update["target_file"]
-    if target not in allowed:
-        raise ValidationError(f"Target file not allowed: {target}")
-
-    declared = update.get("declared_files", [target])
-    for f in declared:
-        if f not in allowed:
-            raise ValidationError(f"Forbidden file modification: {f}")
-
-    if "mes_scalp.py" in declared and "mes_swing.py" in declared:
-        raise ValidationError("Cross-contamination detected")
+    return True
 
 
-def validate_ast(update):
-    target = update["target_file"]
-    if not target.endswith(".py"):
-        return
-
-    require_fields(update, ["content"])
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: validate.py <change.yaml>")
+        sys.exit(1)
 
     try:
-        ast.parse(update["content"])
-    except SyntaxError as e:
-        raise ValidationError(
-            f"Python syntax error in {target}: {e.msg} (line {e.lineno})"
-        )
-
-
-# ------------------------------------------------------------
-# ENTRY POINT
-# ------------------------------------------------------------
-
-def validate_update(update):
-    require_fields(update, ["type", "target_file", "version_from", "change_categories"])
-
-    validate_file_scope(update)
-
-    computed = compute_version(update["version_from"], update["change_categories"])
-    update["version_to"] = computed
-
-    validate_changelog(computed)
-    validate_ast(update)
+        validate(Path(sys.argv[1]))
+        print("Validation passed")
+    except Exception as e:
+        print(f"Validation failed: {e}")
+        sys.exit(1)
