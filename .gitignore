@@ -1,1 +1,3 @@
 mes/stage/
+__pycache__/
+*.pyc
