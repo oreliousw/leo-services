@@ -1,147 +1,276 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Git operations for AI-GENT
-==========================
+AI-GENT v0.10
+Governance + GitOps Steward for leo
 
-Single-responsibility helpers to interact with the leo-services repo.
-
-Key behavior (Option A):
-- If a target branch already exists (local or remote), reuse it (checkout).
-- If it does not exist, create it (checkout -b).
-- Never operate on non "ai/*" branches via these helpers.
-
-This file is designed to be boring and predictable. No merges, no rebases,
-no history rewriting — just branch, write, commit, push.
+Capabilities:
+- Validate update intent (AI_RULES.md v2.0 semantics)
+- Create or reuse isolated AI branches (Option A)
+- Enforce diff safety before commit
+- For logic changes: write full-file content
+- For parameter changes: in-place parameter patch (no full-file content required)
+- CHANGELOG:
+    * logic: idempotent stub append using version_to (if provided)
+    * parameter: skipped unless version_to is present
+- Commit and push safely (no merge)
 """
 
 from __future__ import annotations
 
-import subprocess
+import sys
+import re
 from pathlib import Path
-from typing import Iterable, Union, List
+from typing import Dict, Any, Iterable
 
-# Repository root where AI-GENT operates
+import yaml
+
+from ops.validate import validate_update, ValidationError
+from ops.diffcheck import enforce_diff_safety, DiffError
+from ops.github import (
+    ensure_clean_worktree,
+    current_branch,
+    create_or_checkout_branch,   # Option A behavior
+    ensure_ai_branch,
+    branch_exists_remote,
+    write_file,
+    commit_files,
+    push_branch,
+    GitError,
+)
+
 REPO_ROOT = Path.home() / "leo-services"
+CHANGELOG_PATH = REPO_ROOT / "mes" / "CHANGELOG.md"
 
 
-class GitError(Exception):
-    """Raised when a git command fails."""
+# ------------------------------
+# YAML load
+# ------------------------------
+def load_update(path: Path) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
-def run(cmd: List[str]) -> str:
+# ------------------------------
+# Version increment class (legacy compat; harmless if unused)
+# ------------------------------
+def determine_increment_class(update: dict) -> str:
     """
-    Run a git (or shell) command in REPO_ROOT and return stdout as text.
-    Raises GitError on non-zero exit.
+    Deterministic collapsed precedence per prior VERSION_POLICY.md.
+    Retained for compatibility if versioned logic changes keep using it.
     """
-    result = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        stdout = (result.stdout or "").strip()
-        msg = stderr if stderr else stdout if stdout else f"Command failed: {' '.join(cmd)}"
-        raise GitError(msg)
-    return (result.stdout or "").strip()
+    categories = set(update.get("change_categories", []))
+
+    if "strategy_behavior" in categories and "hotfix_critical" in categories:
+        return "SUFFIX"
+
+    priority = [
+        ("risk_model_rewrite", "MAJOR"),
+        ("strategy_behavior", "MINOR"),
+        ("execution_logic", "PATCH"),
+        ("diagnostics_logging", "PATCH"),
+        ("infrastructure", "PATCH"),
+        ("hotfix_critical", "SUFFIX"),
+    ]
+    for cat, cls in priority:
+        if cat in categories:
+            return cls
+    return "PATCH"
 
 
-def ensure_clean_worktree() -> None:
+# ------------------------------
+# CHANGELOG handling
+# ------------------------------
+def ensure_changelog_entry(update: dict) -> bool:
     """
-    Fail if there are unstaged/uncommitted changes. We require a clean tree
-    before AI-GENT writes or commits files.
+    Idempotent: appends a stub entry only if version_to is present AND not already in file.
+    Returns True if file was modified, False otherwise.
     """
-    status = run(["git", "status", "--porcelain"])
-    if status:
-        raise GitError("Git worktree is not clean; aborting operation")
+    version = update.get("version_to")
+    if not version:
+        return False  # parameter-only updates without a bump do not touch changelog
+
+    if CHANGELOG_PATH.exists():
+        current_content = CHANGELOG_PATH.read_text(encoding="utf-8")
+    else:
+        current_content = "# MES Change Log\n\n"
+        CHANGELOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if re.search(rf"^##\s+{re.escape(str(version))}\b", current_content, re.MULTILINE):
+        return False
+
+    inc_class = determine_increment_class(update)
+    summary = (update.get("summary") or update.get("tagline") or "Automated update").strip()
+    if summary and not summary.endswith("."):
+        summary += "."
+
+    new_entry = f"\n## {version} ({inc_class})\n- {summary}\n"
+    CHANGELOG_PATH.write_text(current_content + new_entry, encoding="utf-8")
+    return True
 
 
-def current_branch() -> str:
-    """Return the current branch name."""
-    return run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+# ------------------------------
+# Parameter patching (no full-file content)
+# ------------------------------
+_PARAM_LINE = re.compile(r"^([A-Z][A-Z0-9_]*\s*=\s*)(.+)$", re.MULTILINE)
 
-
-def ensure_ai_branch(branch: str) -> None:
+def _format_value_for_python(value: Any) -> str:
     """
-    Guardrail: only allow AI-GENT helpers to operate on ai/* branches.
+    Preserve numeric vs string intent. YAML gives us strings for 0.6 etc.
+    If it looks like a number, keep it bare; otherwise repr().
     """
-    if not branch.startswith("ai/"):
-        raise GitError(f"Refusing to operate on non-AI branch: {branch}")
+    s = str(value).strip()
+    # numeric literal? (int/float)
+    if re.fullmatch(r"[+-]?(\d+(\.\d*)?|\.\d+)", s):
+        return s
+    # True/False/None
+    if s in {"True", "False", "None"}:
+        return s
+    return repr(s)
 
-
-def branch_exists_local(branch: str) -> bool:
+def patch_parameter_in_file(rel_path: str, param: str, new_value: Any) -> bool:
     """
-    True if a local branch with this name exists.
+    Replace a top-level assignment like:
+        PARAM = <anything>
+    with the new value. Returns True if a replacement occurred.
     """
-    output = run(["git", "branch", "--list", branch])
-    return bool(output)
+    path = REPO_ROOT / rel_path
+    text = path.read_text(encoding="utf-8")
+
+    replaced = False
+
+    def _repl(m: re.Match) -> str:
+        nonlocal replaced
+        name, _val = m.group(1), m.group(2)
+        # Only swap the specific param line
+        if text[m.start():m.end()].lstrip().startswith(f"{param}"):
+            replaced = True
+            return f"{name}{_format_value_for_python(new_value)}"
+        return m.group(0)
+
+    new_text = _PARAM_LINE.sub(_repl, text)
+    if not replaced:
+        raise GitError(f"Parameter '{param}' not found in {rel_path}")
+
+    (REPO_ROOT / rel_path).write_text(new_text, encoding="utf-8")
+    return True
 
 
-def branch_exists_remote(branch: str) -> bool:
-    """
-    True if a remote branch (origin/<branch>) exists.
-    """
-    output = run(["git", "ls-remote", "--heads", "origin", branch])
-    return bool(output)
+# ------------------------------
+# UI
+# ------------------------------
+def usage():
+    print("Usage: ai-gent <validate|commit|push> <update.yaml>")
+    sys.exit(1)
 
 
-def create_or_checkout_branch(branch_name: str) -> None:
-    """
-    Option A behavior:
-      - If already on the requested branch, do nothing.
-      - If the branch exists locally: checkout it.
-      - Else if it exists remotely: checkout tracking origin/<branch>.
-      - Else: create it locally with 'checkout -b'.
-    """
-    ensure_ai_branch(branch_name)
+# ------------------------------
+# Main
+# ------------------------------
+def main():
+    if len(sys.argv) < 3:
+        usage()
 
-    curr = current_branch()
-    if curr == branch_name:
-        return  # already on target
+    command = sys.argv[1]
+    update_path = Path(sys.argv[2])
+    if not update_path.exists():
+        print(f"Update file not found: {update_path}")
+        sys.exit(1)
 
-    if branch_exists_local(branch_name):
-        run(["git", "checkout", branch_name])
-        return
+    update = load_update(update_path)
 
-    if branch_exists_remote(branch_name):
-        run(["git", "checkout", "-t", f"origin/{branch_name}"])
-        return
+    # 1) Validate (new v2.0 validator adds 'content' for legacy logic path, but param path won't use it)
+    try:
+        validate_update(update)
+    except ValidationError as e:
+        print(f"Validation failed: {e}")
+        sys.exit(1)
 
-    run(["git", "checkout", "-b", branch_name])
+    if command == "validate":
+        print("Validation passed")
+        sys.exit(0)
+
+    # 2) Commit workflow
+    if command == "commit":
+        try:
+            ensure_clean_worktree()
+
+            utype   = update.get("type")
+            target  = update["target_file"]
+            rel_path = f"mes/{target}"
+
+            # Branch naming:
+            # - logic with version_to -> ai/<file>-<version>
+            # - parameter -> ai/<file>-param
+            version_to = update.get("version_to")
+            if utype == "logic" and version_to:
+                branch_name = f"ai/{target.replace('.', '-')}-{version_to}"
+            else:
+                branch_name = f"ai/{target.replace('.', '-')}-param"
+
+            print(f"→ Creating/reusing branch: {branch_name}")
+            create_or_checkout_branch(branch_name)  # Option A
+
+            # Apply change
+            if utype == "logic":
+                # Expect full file content (validator ensured 'content' exists via compat shim)
+                content = update["content"]
+                write_file(rel_path, content)
+            elif utype == "parameter":
+                # In-place parameter patch (no full-file content required)
+                param = update["parameter"]
+                new   = update["change"]["to"]
+                patch_parameter_in_file(rel_path, param, new)
+            else:
+                raise GitError(f"Unknown change type: {utype}")
+
+            # CHANGELOG: only if version bump is provided
+            print("→ Ensuring CHANGELOG entry (if version provided)...")
+            changelog_modified = ensure_changelog_entry(update)
+
+            # Enforce diff safety BEFORE commit
+            enforce_diff_safety(update)
+
+            # Commit message
+            msg_head = update.get("tagline") or update.get("statement") or f"{utype} update"
+            commit_msg = (
+                f"{target} – {msg_head}\n\n"
+                f"Change type: {utype}\n"
+                f"Managed by AI-GENT"
+            )
+
+            files_to_commit: Iterable[str] = [rel_path]
+            if changelog_modified:
+                files_to_commit = [*files_to_commit, "mes/CHANGELOG.md"]
+
+            commit_files(commit_msg, files_to_commit)
+            print("Commit created (CHANGELOG updated only if needed)")
+            print(f"Branch: {branch_name}")
+            print("ℹ No merge or push performed")
+        except (ValidationError, DiffError, GitError, Exception) as e:
+            print(f"Commit failed: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    # 3) Push workflow
+    if command == "push":
+        try:
+            ensure_clean_worktree()
+            branch = current_branch()
+            ensure_ai_branch(branch)
+            if branch_exists_remote(branch):
+                raise GitError(f"Branch already exists on origin: {branch}")
+            print(f"→ Pushing branch to origin: {branch}")
+            push_branch(branch)
+            print("Branch pushed successfully")
+            print("ℹ No merge performed")
+        except (GitError, Exception) as e:
+            print(f"Push failed: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    usage()
 
 
-# Backward-compat wrapper: some callers still import/create_branch(...)
-def create_branch(branch_name: str) -> None:
-    """
-    Backwards-compatible alias for create_or_checkout_branch.
-    Safe to remove once all callers are migrated.
-    """
-    create_or_checkout_branch(branch_name)
-
-
-def push_branch(branch: str) -> None:
-    """
-    Push current branch to origin, setting upstream if needed.
-    """
-    ensure_ai_branch(branch)
-    run(["git", "push", "-u", "origin", branch])
-
-
-def write_file(rel_path: Union[str, Path], content: str) -> None:
-    """
-    Write file contents under REPO_ROOT, creating parent dirs as needed.
-    """
-    path = REPO_ROOT / Path(rel_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-
-
-def commit_files(message: str, files: Iterable[Union[str, Path]]) -> None:
-    """
-    Stage and commit the provided files with the given commit message.
-    """
-    file_args = [str(REPO_ROOT / Path(f)) for f in files]
-    run(["git", "add", *file_args])
-    run(["git", "commit", "-m", message])
+if __name__ == "__main__":
+    main()
