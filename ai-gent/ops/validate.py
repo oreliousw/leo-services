@@ -123,11 +123,38 @@ def validate(path: Path):
 # Backward-compatible entrypoint for ai-gent
 # ---------------------------------------------------------------------
 
-def validate_update(path):
+def validate_update(update):
     """
     Backward-compatible entrypoint expected by ai-gent.
+
+    ai-gent may pass either:
+    - a filesystem path (str / Path)
+    - an already-parsed YAML dict
     """
-    validate(Path(path))
+
+    # Case 1: ai-gent already parsed the YAML
+    if isinstance(update, dict):
+        doc = update
+    else:
+        # Case 2: ai-gent passed a filename / path
+        doc = load_yaml(Path(update))
+
+    if not isinstance(doc, dict):
+        fail("Top-level YAML must be a mapping")
+
+    require(doc, "type")
+    require(doc, "target_file")
+
+    change_type = doc["type"]
+
+    if change_type == "parameter":
+        validate_parameter_change(doc)
+    elif change_type == "logic":
+        validate_logic_change(doc)
+    else:
+        fail(f"Unknown change type: {change_type}")
+
+    return True
 
 
 # ---------------------------------------------------------------------
