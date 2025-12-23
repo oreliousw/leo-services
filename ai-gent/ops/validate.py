@@ -8,6 +8,7 @@ Design principles:
 - Branch validation by `type`
 - Parameter changes are lightweight
 - Logic changes are explicit and versioned
+- Backward compatible with existing ai-gent entrypoints
 - Fail fast, fail once, fail clearly
 """
 
@@ -15,12 +16,21 @@ from pathlib import Path
 import yaml
 import sys
 
+
+# ---------------------------------------------------------------------
+# Compatibility Exception (required by ai-gent)
+# ---------------------------------------------------------------------
+
+class ValidationError(Exception):
+    pass
+
+
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
 
 def fail(msg: str):
-    raise ValueError(msg)
+    raise ValidationError(msg)
 
 
 def require(data: dict, field: str):
@@ -85,7 +95,7 @@ def validate_logic_change(doc: dict):
 
 
 # ---------------------------------------------------------------------
-# Entry point
+# Core validator
 # ---------------------------------------------------------------------
 
 def validate(path: Path):
@@ -109,6 +119,21 @@ def validate(path: Path):
     return True
 
 
+# ---------------------------------------------------------------------
+# Backward-compatible entrypoint for ai-gent
+# ---------------------------------------------------------------------
+
+def validate_update(path):
+    """
+    Backward-compatible entrypoint expected by ai-gent.
+    """
+    validate(Path(path))
+
+
+# ---------------------------------------------------------------------
+# CLI usage (manual testing)
+# ---------------------------------------------------------------------
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: validate.py <change.yaml>")
@@ -117,6 +142,6 @@ if __name__ == "__main__":
     try:
         validate(Path(sys.argv[1]))
         print("Validation passed")
-    except Exception as e:
+    except ValidationError as e:
         print(f"Validation failed: {e}")
         sys.exit(1)
