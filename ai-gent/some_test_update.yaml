@@ -1,0 +1,12 @@
+type: full
+target_file: mes_scalp.py
+declared_files:
+  - mes_scalp.py
+version_from: v0.0.0
+version_to: v0.0.2
+content: |
+  # test placeholder for AI-GENT commit validation
+
+  def _ai_gent_placeholder():
+      return "ok"
+
