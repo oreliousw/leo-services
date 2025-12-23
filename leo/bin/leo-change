@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""
+leo-change.py
+---------------------------------
+Simple change questionnaire for AI_RULES.md v2.0
+(legacy-compatible emitter)
+
+Purpose:
+- Ask the minimum required questions
+- Emit a human- and AI-readable change artifact
+- Save artifact to AI-GENT handoff directory
+- Guarantee compatibility with current ai-gent validator
+
+If this script feels complicated, the rules are wrong.
+/home/ubu/leo/bin/leo-change 
+"""
+
+from datetime import datetime, timezone
+from pathlib import Path
+import re
+
+# ---------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------
+
+FILES = ["mes_scalp.py", "mes_swing.py"]
+
+SOURCE_DIR = Path("/opt/mes")  # live source files
+HANDOFF_DIR = Path.home() / "ai-control" / "handoff" / "incoming"
+HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
+
+PARAM_REGEX = re.compile(r"^([A-Z][A-Z0-9_]+)\s*=", re.MULTILINE)
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def prompt_choice(prompt, choices):
+    while True:
+        if prompt:
+            print(prompt)
+        for i, c in enumerate(choices, start=1):
+            print(f"  {i}) {c}")
+        sel = input("Select: ").strip()
+        if sel.isdigit() and 1 <= int(sel) <= len(choices):
+            return choices[int(sel) - 1]
+        print("Invalid selection. Try again.\n")
+
+
+def prompt(text, allow_empty=False):
+    while True:
+        val = input(f"{text}: ").strip()
+        if val or allow_empty:
+            return val
+        print("Value required.\n")
+
+
+def write_output(filename, content):
+    path = HANDOFF_DIR / filename
+    path.write_text(content)
+    print("\n--- CHANGE ARTIFACT ---\n")
+    print(content)
+    print("\n-----------------------")
+    print(f"\nSaved to:\n{path}\n")
+
+
+def discover_parameters(filename: str):
+    src = SOURCE_DIR / filename
+    if not src.exists():
+        print(f"\nERROR: Source file not found: {src}")
+        return []
+
+    text = src.read_text()
+    params = sorted(set(PARAM_REGEX.findall(text)))
+    return params
+
+
+def discover_version(filename: str):
+    """
+    Best-effort extraction of current version string.
+    Falls back to manual entry if not found.
+    """
+    src = SOURCE_DIR / filename
+    if not src.exists():
+        return None
+
+    text = src.read_text()
+    m = re.search(r"v\d+\.\d+\.\d+", text)
+    return m.group(0) if m else None
+
+# ---------------------------------------------------------------------
+# Logic Change Flow
+# ---------------------------------------------------------------------
+
+def logic_change():
+    print("\nLOGIC CHANGE\n------------")
+    file = prompt_choice("Target file?", FILES)
+    tagline = prompt("One-line tagline (what changed)")
+
+    detected = discover_version(file)
+    if detected:
+        print(f"Detected current version: {detected}")
+        v_from = detected
+    else:
+        v_from = prompt("Current version")
+
+    v_to = prompt("New version")
+    note = prompt("Optional note (press Enter to skip)", allow_empty=True)
+
+    ts = datetime.now(timezone.utc)
+    ts_str = ts.strftime("%Y%m%dT%H%M%S")
+
+    content = f"""\
+type: logic
+
+target_file: {file}
+
+tagline: "{tagline}"
+
+version_from: {v_from}
+version_to: {v_to}
+"""
+
+    if note:
+        content += f'\nnote: "{note}"\n'
+
+    filename = f"{ts_str}_{file.replace('.py','')}_logic.yaml"
+    write_output(filename, content)
+
+# ---------------------------------------------------------------------
+# Parameter Change Flow (FULLY COMPATIBLE)
+# ---------------------------------------------------------------------
+
+def parameter_change():
+    print("\nPARAMETER CHANGE\n----------------")
+    file = prompt_choice("Target file?", FILES)
+
+    params = discover_parameters(file)
+    if not params:
+        print("No tunable parameters detected. Aborting.")
+        return
+
+    print("\nDetected parameters:\n")
+    for i, p in enumerate(params, start=1):
+        print(f"  {i}) {p}")
+
+    while True:
+        sel = input("\nSelect parameter by number: ").strip()
+        if sel.isdigit() and 1 <= int(sel) <= len(params):
+            param = params[int(sel) - 1]
+            break
+        print("Invalid selection. Try again.")
+
+    old = prompt("Old value")
+    new = prompt("New value")
+
+    detected = discover_version(file)
+    if detected:
+        v_from = detected
+        v_to = detected
+    else:
+        v_from = prompt("Current version (no change)")
+        v_to = v_from
+
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    content = f"""\
+type: parameter
+
+target_file: {file}
+
+parameter: {param}
+
+change:
+  from: {old}
+  to: {new}
+
+version_from: {v_from}
+version_to: {v_to}
+
+timestamp: {ts}
+statement: "No logic changed"
+"""
+
+    filename = f"{ts.replace(':','').replace('-','')}_{file.replace('.py','')}_param.yaml"
+    write_output(filename, content)
+
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
+
+def main():
+    print("LEO CHANGE ASSISTANT")
+    print("-------------------\n")
+    print("What kind of change is this?\n")
+
+    change = prompt_choice("", ["Logic change", "Parameter change"])
+
+    if change == "Logic change":
+        logic_change()
+    else:
+        parameter_change()
+
+
+if __name__ == "__main__":
+    main()
