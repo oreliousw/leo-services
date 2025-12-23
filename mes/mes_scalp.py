@@ -154,7 +154,7 @@ else:
     raise RuntimeError(f"Unknown OANDA API URL: {OANDA_REST_URL}")
 
 if MODE == "LIVE":
-    DEFAULT_RISK_PCT = 0.005
+    DEFAULT_RISK_PCT = 0.006
 else:
     DEFAULT_RISK_PCT = DEMO_SCALP_RISK_PCT
 
