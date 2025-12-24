@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -e
+
+SRC="$HOME/leo/bin"
+DST="/usr/local/bin"
+
+echo "Installing Leo operator tools..."
+
+sudo install -m 755 "$SRC/leo"     "$DST/leo"
+sudo install -m 755 "$SRC/mes-run" "$DST/mes-run"
+
+echo "✔ leo installed"
+echo "✔ mes-run installed"

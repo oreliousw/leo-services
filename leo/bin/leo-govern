@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+leo govern
+----------
+Generate ai-gent update.yaml files and immediately run
+ai-gent validate → commit → push.
+
+This command performs GOVERNANCE ONLY.
+Deployment requires an explicit `leo deploy demo|live`.
+
+Usage:
+  leo govern <scalp|swing> <stage_file>
+
+Examples:
+  leo govern swing stage/mes_swing_v3.4.10.py
+  leo govern scalp stage/mes_scalp_v3.4.10.py
+"""
+
+import sys
+import re
+import subprocess
+from pathlib import Path
+from datetime import datetime, timezone
+
+# -----------------------------
+# Argument handling
+# -----------------------------
+if len(sys.argv) != 4:
+    print("Usage: leo govern <scalp|swing> <stage_file>")
+    sys.exit(1)
+
+_, _, strategy, stage_arg = sys.argv
+strategy = strategy.lower()
+
+if strategy not in {"scalp", "swing"}:
+    print("Error: strategy must be 'scalp' or 'swing'")
+    sys.exit(1)
+
+stage_files = list(Path().glob(stage_arg))
+if not stage_files:
+    print(f"Error: no files matched '{stage_arg}'")
+    sys.exit(1)
+
+if len(stage_files) > 1:
+    print("Error: multiple files matched; be explicit:")
+    for f in stage_files:
+        print(f"  - {f}")
+    sys.exit(1)
+
+stage_file = stage_files[0]
+
+# -----------------------------
+# Version inference
+# -----------------------------
+m = re.search(r"_v(\d+\.\d+\.\d+)", stage_file.name)
+if not m:
+    print(f"Error: cannot infer version from '{stage_file.name}'")
+    print("Expected pattern: *_vX.Y.Z.py")
+    sys.exit(1)
+
+version = m.group(1)
+
+# -----------------------------
+# Paths
+# -----------------------------
+repo_root = Path.home() / "leo-services" / "mes"
+updates_dir = repo_root / "updates"
+updates_dir.mkdir(parents=True, exist_ok=True)
+
+target_file = f"mes_{strategy}.py"
+yaml_name = f"{strategy}_v{version}.yaml"
+yaml_path = updates_dir / yaml_name
+
+timestamp = datetime.now(timezone.utc).isoformat()
+
+# -----------------------------
+# YAML generation
+# -----------------------------
+yaml = f"""id: mes-{strategy}-v{version}
+component: mes_{strategy}
+type: code_update
+scope: {strategy}_strategy
+
+metadata:
+  generated_at: "{timestamp}"
+  generator: leo govern
+
+source_file: {stage_file}
+target_file: {target_file}
+
+changes:
+  - Version bump to v{version}
+  - Code updates staged via leo govern
+  - No intentional behavioral deviation unless stated
+
+constraints:
+  - No backtesting logic
+  - No shared modules between scalp and swing
+  - Preserve LIVE/DEMO safety gates
+  - Fail-fast on validation errors
+"""
+
+yaml_path.write_text(yaml)
+print(f"[leo-govern] Generated {yaml_path}")
+
+# -----------------------------
+# ai-gent execution
+# -----------------------------
+def run(cmd: list[str], label: str):
+    print(f"[leo-govern] {label}...")
+    r = subprocess.run(cmd, text=True)
+    if r.returncode != 0:
+        print(f"[leo-govern] FAILED during {label}")
+        sys.exit(r.returncode)
+
+run(["ai-gent", "validate", str(yaml_path)], "ai-gent validate")
+run(["ai-gent", "commit",   str(yaml_path)], "ai-gent commit")
+run(["ai-gent", "push",     str(yaml_path)], "ai-gent push")
+
+print(f"[leo-govern] Governance complete for {strategy} v{version}")
+print("[leo-govern] Ready for: leo deploy demo|live")
