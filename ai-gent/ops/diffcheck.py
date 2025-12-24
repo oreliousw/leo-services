@@ -1,17 +1,15 @@
 """
-Diff safety checks for AI-GENT
-Ensures only declared files are modified and within safe bounds
+ai-gent/ops/diffcheck.py — Diff safety checks for AI-GENT
+Ensures only declared mes/ files are modified, no binaries, within line bounds
+Improved: staged diff, robust parsing, clearer errors
 """
-
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path.home() / "leo-services"
 
-
 class DiffError(Exception):
     pass
-
 
 def run(cmd):
     result = subprocess.run(
@@ -24,45 +22,52 @@ def run(cmd):
         raise DiffError(result.stderr.strip())
     return result.stdout.strip()
 
-
 def get_diff_numstat():
     """
-    Returns list of (added, removed, filename)
+    Returns list of (added:int, removed:int, filename:str) for staged changes
     """
-    output = run(["git", "diff", "--numstat"])
+    output = run(["git", "diff", "--cached", "--numstat"])
     changes = []
-
     if not output:
         return changes
-
     for line in output.splitlines():
-        added, removed, path = line.split("\t")
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue  # Skip malformed lines gracefully
+        added_str, removed_str, path = parts
+        # Git uses "-" for binary files
+        if added_str == "-" or removed_str == "-":
+            raise DiffError(f"Binary or non-text diff detected: {path}")
+        try:
+            added = int(added_str)
+            removed = int(removed_str)
+        except ValueError:
+            continue  # Skip invalid numbers
         changes.append((added, removed, path))
-
     return changes
 
-
-def enforce_diff_safety(update, max_lines=200):
+def enforce_diff_safety(update, max_lines: int = 200):
+    """
+    Safety checks:
+    - Only declared mes/* files modified
+    - No binary files
+    - Total lines changed per file <= max_lines
+    """
     declared = update.get("declared_files", [])
+    if not declared:
+        raise DiffError("No declared_files in update YAML")
     declared_paths = {f"mes/{f}" for f in declared}
 
     changes = get_diff_numstat()
-
     if not changes:
-        raise DiffError("No changes detected; nothing to commit")
+        raise DiffError("No staged changes detected; nothing to commit")
 
     for added, removed, path in changes:
-        # File scope check
         if path not in declared_paths:
-            raise DiffError(f"Unauthorized file modified: {path}")
-
-        # Deletion check
-        if added == "-" or removed == "-":
-            raise DiffError(f"Binary or non-text diff detected: {path}")
-
-        total = int(added) + int(removed)
+            raise DiffError(f"Unauthorized file modified: {path} (only mes/* declared files allowed)")
+        total = added + removed
         if total > max_lines:
             raise DiffError(
-                f"Change too large in {path}: {total} lines (limit {max_lines})"
+                f"Change too large in {path}: {total} lines (+{added}/-{removed}) exceeds limit {max_lines}"
             )
-
+    # All good!
