@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MES v3.4.9 LIVE/DEMO – Auto Trader & Diagnostics
+MES v3.5.0 LIVE/DEMO – Auto Trader & Diagnostics
 (Pure micro-scalp + Impulse-State Guard + continuation scalps)
-Changelog v3.4.8a → v3.4.9
+Changelog v3.4.9 → v3.5.0
+  • Increased LIVE scalp risk from 0.6% to 0.8% for better compounding
   • Relaxed impulse-state gating for continuation scalps
   • Continuation entries now allowed when impulse travel is near lower end of SPENT threshold
     or when volume has normalized after the move (still blocks truly exhausted impulses)
@@ -105,7 +106,7 @@ SCALP_MAX_SL_PIPS = 18.0
 DEMO_SCALP_RISK_PCT = 0.020
 DEMO_SWING_RISK_PCT = 0.008
 DEMO_MAX_SWING_MARGIN_FRACTION = 0.20
-LIVE_SCALP_RISK_PCT = 0.006   # NEW: explicit LIVE risk
+LIVE_SCALP_RISK_PCT = 0.008  # Updated: LIVE risk boosted to 0.8%
 OANDA_API_TOKEN = os.getenv("OANDA_API_TOKEN", config.get("OANDA_API_KEY", ""))
 OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", config.get("OANDA_ACCOUNT_ID", ""))
 OANDA_REST_URL = os.getenv("OANDA_API_URL", "").rstrip("/")
@@ -127,13 +128,11 @@ elif "fxtrade" in OANDA_REST_URL:
     MODE = "LIVE"
 else:
     raise RuntimeError(f"Unknown OANDA API URL: {OANDA_REST_URL}")
-
 # Centralized risk selection – only place DEFAULT_RISK_PCT is set
 DEFAULT_RISK_PCT = DEMO_SCALP_RISK_PCT
 if MODE == "LIVE":
     DEFAULT_RISK_PCT = LIVE_SCALP_RISK_PCT
-
-VERSION = f"MES v3.4.9 {MODE}"
+VERSION = f"MES v3.5.0 {MODE}"
 has_tg = bool(TELEGRAM_BOT_TOKEN.strip()) == bool(TELEGRAM_CHAT_ID.strip())
 if TELEGRAM_BOT_TOKEN and not has_tg:
     raise RuntimeError("Telegram token/chat mismatch")
@@ -242,7 +241,7 @@ def save_mes_diagnostics(diag_by_pair: Dict[str, MesDecision]):
         "version": VERSION,
         "trading_mode": MODE,
         "risk_settings": {
-            "live_risk_pct": 0.005,
+            "live_risk_pct": LIVE_SCALP_RISK_PCT,
             "demo_scalp_risk_pct": DEMO_SCALP_RISK_PCT,
             "demo_swing_risk_pct": DEMO_SWING_RISK_PCT,
             "demo_max_swing_margin": DEMO_MAX_SWING_MARGIN_FRACTION,
@@ -552,11 +551,7 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
     tp_price = entry + tp_pips * oanda_get_pip_value(instrument) if direction == "bullish" else entry - tp_pips * oanda_get_pip_value(instrument)
     is_swing = tp_pips >= SCALP_MAX_TP_PIPS or sl_pips >= SCALP_MAX_SL_PIPS
     trade_class = "SWING" if is_swing else "SCALP"
-    if MODE == "LIVE":
-        risk_pct_used = 0.005
-    else:
-        base_risk = DEMO_SWING_RISK_PCT if trade_class == "SWING" else DEMO_SCALP_RISK_PCT
-        risk_pct_used = base_risk * risk_multiplier
+    risk_pct_used = base_risk_pct * risk_multiplier if MODE == "DEMO" else base_risk_pct  # Cleaner LIVE handling
     units = estimate_units_for_risk(instrument, direction, nav, risk_pct_used, entry, sl_price)
     decision.units_scaled = abs(units)
     margin_cap_applied = False
@@ -596,7 +591,7 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
     decision.margin_cap_applied = margin_cap_applied
     decision.final_units = abs(units)
     decision.entry_type = entry_type
-    oanda_place_market_order(instrument, units, round(sl_price, 5), round(tp_price, 5), f"MESv3.4.9")
+    oanda_place_market_order(instrument, units, round(sl_price, 5), round(tp_price, 5), f"MESv3.5.0")
     return decision
 # ============================================================
 # MAIN CYCLE
