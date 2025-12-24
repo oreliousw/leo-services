@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-SRC="$HOME/leo/bin"
+SRC_DIR="/home/ubu/leo-services/leo/bin"   # correct path now
 DST="/usr/local/bin"
 
 echo "Installing Leo operator tools..."
 
-sudo install -m 755 "$SRC/leo"     "$DST/leo"
-sudo install -m 755 "$SRC/mes-run" "$DST/mes-run"
+sudo install -m 755 "$SRC_DIR/leo" "$DST/leo"
+sudo install -m 755 "$SRC_DIR/mes-run" "$DST/mes-run"
+# Add others if you have them, e.g.:
+# sudo install -m 755 "$SRC_DIR/leo-change" "$DST/leo-change"
+# sudo install -m 755 "$SRC_DIR/leo-govern" "$DST/leo-govern"
 
 echo "✔ leo installed"
 echo "✔ mes-run installed"
