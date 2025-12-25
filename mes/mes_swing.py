@@ -179,7 +179,7 @@ def save_diag(diag: dict):
 def oanda_get_candles(instrument: str, tf: str, count: int = 300) -> pd.DataFrame:
     r = session.get(
         f"{OANDA_REST_URL}/v3/instruments/{instrument}/candles",
-        params={"granularity": tf, "count": count, "price": "MID"},  # Updated to "MID"
+        params={"granularity": tf, "count": count, "price": "M"},  # Change back to "M"
         timeout=15,
     )
     r.raise_for_status()

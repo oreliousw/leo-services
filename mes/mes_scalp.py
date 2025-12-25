@@ -302,7 +302,7 @@ def save_mes_diagnostics(diag_by_pair: Dict[str, MesDecision]):
 def oanda_get_candles(instrument: str, tf: str) -> pd.DataFrame:
     r = oanda_session.get(
         f"{OANDA_REST_URL}/v3/instruments/{instrument}/candles",
-        params={"granularity": tf, "count": CANDLE_COUNT, "price": "MID"},  # Updated to "MID"
+        params={"granularity": tf, "count": CANDLE_COUNT, "price": "M"},  # Updated to "MID"
         timeout=15,
     )
     r.raise_for_status()
