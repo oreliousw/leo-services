@@ -1,13 +1,13 @@
 [Unit]
 Description=Monero Full Node (Personal Hardened, Full Blockchain, Mining-Optimized)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=ubu
 Group=ubu
 WorkingDirectory=/mnt/monero
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-
 ExecStart=/usr/local/bin/monerod \
     --data-dir /mnt/monero/.bitmonero \
     --rpc-bind-ip 0.0.0.0 \
@@ -21,18 +21,14 @@ ExecStart=/usr/local/bin/monerod \
     --log-level 1 \
     --non-interactive \
     --max-concurrency=2
-
-# Make monerod stay low priority so XMRig dominates
+# Keep monerod low priority for XMRig
 Nice=10
 IOSchedulingClass=idle
-
-# Limit monerod to cores 0 and 1 only
+# Pin to cores 0-1
 CPUAffinity=0 1
-
 LimitNOFILE=4096
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-

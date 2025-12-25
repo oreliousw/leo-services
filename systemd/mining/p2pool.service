@@ -1,13 +1,13 @@
 [Unit]
-Description=P2Pool Full Node (Mr O Build)
-After=network.target monerod.service
+Description=P2Pool Full Node (Mr O Build – decentralized sidechain)
+After=network-online.target monerod.service
+Wants=network-online.target
 Requires=monerod.service
 
 [Service]
 User=ubu
 Group=ubu
 WorkingDirectory=/home/ubu/.p2pool
-
 ExecStart=/usr/local/bin/p2pool \
     --host 127.0.0.1 \
     --rpc-port 18081 \
@@ -19,7 +19,9 @@ ExecStart=/usr/local/bin/p2pool \
     --data-api /home/ubu/.p2pool/api \
     --local-api \
     --loglevel 2
-
+# Keep p2pool polite—let XMRig have priority if needed
+Nice=5
+# Auto-restart on crash/network blip
 Restart=always
 RestartSec=5
 
