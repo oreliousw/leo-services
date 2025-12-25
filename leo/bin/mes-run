@@ -1,29 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # SOURCE FILE
-# Edit here: ~/leo/bin/mes-run
-# Install with: leo-install
+# Edit here: ~/leo-services/leo/bin/mes-run
+# Install with: leo install
 # DO NOT edit /usr/local/bin/mes-run directly
-
 """
 MES Operator Command – mes-run
 ================================================
-Version: 1.6.2
+Version: 1.7.0 (refined ops)
 
 Purpose:
-- Single operator entrypoint for MES control
-- Strategy-first command structure (SCALP vs SWING)
-- Clear LIVE vs DEMO separation
-- Safe enable / disable of execution via systemd timers
-- Authoritative state verification (no false positives)
-- Human-readable failure explanations
-- Direct journal inspection for ground-truth health
+- Lean entrypoint for MES control (scalp/swing + demo/live)
+- Safe timer/service management via systemd
+- Quick status, explain, journal
 
-Design principles:
-- systemd is the source of truth
-- Trading logic NEVER runs here
-- Timers control continuous execution
-- Operator clarity > cleverness
+Changes in 1.7.0:
+- Shortened help menu
+- Consolidated enable/disable into 'timer' command
+- Simplified explain output
+- Removed verbose usage block
 """
 
 import sys
@@ -31,30 +26,21 @@ import subprocess
 from datetime import datetime
 
 # ============================================================
-# ANSI Colors & Symbols
+# Colors & Symbols
 # ============================================================
-
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
 RESET = "\033[0m"
-
 OK = "✔"
 WARN = "⚠️"
 FAIL = "❌"
 
 # ============================================================
-# Helpers – now with proper single-line sanitizing
+# Helpers
 # ============================================================
-
 def run(cmd: str) -> str:
-    """Run command and return only the first line of stdout, stripped."""
-    output = subprocess.run(
-        cmd,
-        shell=True,
-        capture_output=True,
-        text=True
-    ).stdout
+    output = subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
     return output.splitlines()[0].strip() if output else ""
 
 def run_check(cmd: str) -> int:
@@ -64,231 +50,118 @@ def run_passthrough(cmd: str):
     subprocess.run(cmd, shell=True)
 
 def unit_state_timer(timer: str) -> dict:
-    """Only timer state matters for enablement."""
     return {
-        "active":   run(f"systemctl is-active {timer} 2>/dev/null || echo inactive"),
-        "enabled":  run(f"systemctl is-enabled {timer} 2>/dev/null || echo disabled"),
+        "active": run(f"systemctl is-active {timer} 2>/dev/null || echo inactive"),
+        "enabled": run(f"systemctl is-enabled {timer} 2>/dev/null || echo disabled"),
     }
 
-def unit_state_service(service: str) -> dict:
-    """Service only reports runtime state."""
-    return {
-        "active": run(f"systemctl is-active {service} 2>/dev/null || echo inactive"),
-    }
+def unit_state_service(service: str) -> str:
+    return run(f"systemctl is-active {service} 2>/dev/null || echo inactive")
 
 def last_service_run(service: str) -> str:
-    return run(
-        f"journalctl -u {service} -n 1 --no-pager "
-        f"| sed -E 's/^([^ ]+ [^ ]+).*/\\1/'"
-    )
+    return run(f"journalctl -u {service} -n 1 --no-pager | sed -E 's/^([^ ]+ [^ ]+).*/\\1/'")
 
 def next_timer_fire(timer: str) -> str:
     raw = run(f"systemctl show {timer} -p NextElapseUSecRealtime")
-    if "=" not in raw:
-        return "n/a"
-    return raw.split("=", 1)[1] or "n/a"
-
-def journal_tail(unit: str, lines: int = 30) -> str:
-    return run(f"journalctl -u {unit} -n {lines} --no-pager")
+    return raw.split("=", 1)[1] if "=" in raw else "n/a"
 
 # ============================================================
-# Core Actions (Authoritative – state-driven)
+# Core Actions
 # ============================================================
-
 def run_once(service: str):
     run_check(f"sudo systemctl start {service}")
     print(f"{OK} {service} executed once")
 
-def enable_timer(timer: str):
-    print(f"\nEnabling {timer}...\n")
-
-    # Single privilege escalation (kept from v1.6.1)
-    rc = run_check(
-        f"sudo systemctl daemon-reload && "
-        f"sudo systemctl enable {timer} && "
-        f"sudo systemctl start {timer}"
-    )
-
+def timer_control(timer: str, action: str):
+    print(f"\n{action.capitalize()}ing {timer}...\n")
+    if action == "enable":
+        run_check(f"sudo systemctl daemon-reload && sudo systemctl enable {timer} && sudo systemctl start {timer}")
+    else:
+        run_check(f"sudo systemctl stop {timer} && sudo systemctl disable {timer}")
+    
     state = unit_state_timer(timer)
-
-    if state["enabled"] == "static":
-        print(f"{FAIL} {timer} is STATIC and cannot be enabled")
-        print("Fix:")
-        print("  Add [Install] WantedBy=timers.target to the timer file\n")
-        sys.exit(1)
-
-    if state["enabled"] == "enabled" and state["active"] == "active":
-        print(f"{OK} {timer} enabled and running")
-        return
-
-    print(f"{FAIL} {timer} NOT fully enabled")
-    print(f"Final state → enabled={state['enabled']}  active={state['active']}")
-    sys.exit(1)
-
-def disable_timer(timer: str):
-    print(f"\nDisabling {timer}...\n")
-
-    run_check(
-        f"sudo systemctl stop {timer} && "
-        f"sudo systemctl disable {timer}"
-    )
-
-    state = unit_state_timer(timer)
-
-    # Success = timer reports disabled, regardless of active state
-    if state["enabled"] == "disabled":
-        print(f"{OK} {timer} stopped and disabled")
-        return
-
-    print(f"{FAIL} {timer} NOT fully disabled")
-    print(f"Final state → enabled={state['enabled']}  active={state['active']}")
-    sys.exit(1)
-
-# ============================================================
-# Explain Logic
-# ============================================================
+    status = "enabled and running" if state["enabled"] == "enabled" and state["active"] == "active" else state
+    print(f"{OK if state['enabled'] == ('enabled' if action == 'enable' else 'disabled') else FAIL} {timer} {action}d → {status}")
 
 def explain_service(service: str, timer: str):
     svc = unit_state_service(service)
     tmr = unit_state_timer(timer)
-    failed_state = run(f"systemctl is-failed {service}")
+    failed = run(f"systemctl is-failed {service}")
 
-    print(f"\n=== MES EXPLAIN ({service}) ===\n")
-
+    print(f"\n=== MES {service.upper()} ===\n")
     if tmr["enabled"] == "disabled":
-        print("Status: DISABLED (timer off)\n")
-        print("Meaning:")
-        print("  MES is intentionally turned off.\n")
-        print("Fix:")
-        print("  Enable the timer.\n")
+        print("Status: DISABLED (timer off) — Enable with: mes-run <strat> timer enable <env>")
         return
-
-    if svc["active"] == "active":
-        print("Status: RUNNING\n")
-        print("Meaning:")
-        print("  MES is currently executing.\n")
+    if svc == "active":
+        print("Status: RUNNING")
         return
-
-    if failed_state != "failed":
-        print("Status: IDLE (OK)\n")
-        print("Meaning:")
-        print("  Last MES run completed successfully.")
-        print("  Waiting for next scheduled timer execution.\n")
-        print("Next:")
-        print(f"  {next_timer_fire(timer)}\n")
+    if failed != "failed":
+        print(f"Status: IDLE (OK) — Next fire: {next_timer_fire(timer)}")
         return
-
-    print(f"{RED}Status: FAILED{RESET}\n")
-    logs = journal_tail(service)
-
-    cause = "Unknown failure"
-    fix = "Check journal logs manually"
-
-    if "Missing OANDA" in logs:
-        cause = "Missing OANDA credentials"
-        fix = "Verify 1Password injection"
-    elif "No such file or directory" in logs:
-        cause = "Script or path not found"
-        fix = "Verify ExecStart path"
-    elif "Permission denied" in logs:
-        cause = "Permission error"
-        fix = "Check executable permissions"
-    elif "Traceback" in logs:
-        cause = "Python exception"
-        fix = "Review stack trace"
-
-    print("Cause:")
-    print(f"  {cause}\n")
-    print("Fix:")
-    print(f"  {fix}\n")
+    print(f"{RED}Status: FAILED{RESET}")
+    print("Quick fix hints:")
+    print(" • Check credentials (OANDA env vars)")
+    print(" • Verify script path/permissions")
+    print(" • Run 'mes-run <strat> journal <env>' for logs")
 
 # ============================================================
 # Status
 # ============================================================
-
 def status():
     print("\n=== MES STATUS ===")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
+    
     def block(title, service, timer):
         print(f"[{title}]")
-        print("Timer :", unit_state_timer(timer))
-        print("Service:", unit_state_service(service)["active"])
-        print("Last   :", last_service_run(service) or "n/a")
-        print("Next   :", next_timer_fire(timer))
-        print()
-
+        print(f"  Timer:  {unit_state_timer(timer)}")
+        print(f"  Service: {unit_state_service(service)}")
+        print(f"  Last:   {last_service_run(service) or 'n/a'}")
+        print(f"  Next:   {next_timer_fire(timer)}\n")
+    
     block("SCALP DEMO", "mes_scalp_demo.service", "mes_scalp_demo.timer")
     block("SCALP LIVE", "mes_scalp_live.service", "mes_scalp_live.timer")
     block("SWING DEMO", "mes_swing_demo.service", "mes_swing_demo.timer")
     block("SWING LIVE", "mes_swing_live.service", "mes_swing_live.timer")
 
 # ============================================================
-# Usage
+# Help
 # ============================================================
-
-def usage():
-    print(
-        "MES Operator – mes-run\n\n"
-        "Core:\n"
-        "  mes-run status\n\n"
-        "SCALP:\n"
-        "  mes-run scalp demo\n"
-        "  mes-run scalp live\n"
-        "  mes-run scalp enable demo|live\n"
-        "  mes-run scalp disable demo|live\n"
-        "  mes-run scalp explain demo|live\n"
-        "  mes-run scalp journal demo|live [-f]\n\n"
-        "SWING:\n"
-        "  mes-run swing demo\n"
-        "  mes-run swing live\n"
-        "  mes-run swing enable demo|live\n"
-        "  mes-run swing disable demo|live\n"
-        "  mes-run swing explain demo|live\n"
-        "  mes-run swing journal demo|live [-f]\n"
-    )
-    sys.exit(1)
+def help_menu():
+    print("\nMES Operator – mes-run (v1.7.0)\n")
+    print("Commands:")
+    print("  mes-run status                  Quick health overview")
+    print("  mes-run <scalp|swing> demo|live Run once (play/real money)")
+    print("  mes-run <scalp|swing> timer enable|disable demo|live")
+    print("  mes-run <scalp|swing> explain demo|live  Status + failure hints")
+    print("  mes-run <scalp|swing> journal demo|live [-f]  Tail logs\n")
 
 # ============================================================
 # Entrypoint
 # ============================================================
-
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        usage()
+    if len(sys.argv) < 2 or sys.argv[1].lower() in ("help", "-h"):
+        help_menu()
+        sys.exit(0)
 
     cmd = sys.argv[1].lower()
-
+    
     if cmd == "status":
         status()
-
     elif cmd in ("scalp", "swing") and len(sys.argv) >= 3:
         strat = cmd
         action = sys.argv[2].lower()
-
+        
         if action in ("demo", "live"):
             run_once(f"mes_{strat}_{action}.service")
-
-        elif action in ("enable", "disable") and len(sys.argv) == 4:
-            timer = f"mes_{strat}_{sys.argv[3]}.timer"
-            enable_timer(timer) if action == "enable" else disable_timer(timer)
-
-        elif action == "explain" and len(sys.argv) == 4:
-            explain_service(
-                f"mes_{strat}_{sys.argv[3]}.service",
-                f"mes_{strat}_{sys.argv[3]}.timer"
-            )
-
-        elif action == "journal":
+        elif action == "timer" and len(sys.argv) == 5 and sys.argv[3].lower() in ("enable", "disable") and sys.argv[4].lower() in ("demo", "live"):
+            timer = f"mes_{strat}_{sys.argv[4]}.timer"
+            timer_control(timer, sys.argv[3].lower())
+        elif action == "explain" and len(sys.argv) == 4 and sys.argv[3].lower() in ("demo", "live"):
+            explain_service(f"mes_{strat}_{sys.argv[3]}.service", f"mes_{strat}_{sys.argv[3]}.timer")
+        elif action == "journal" and len(sys.argv) >= 4 and sys.argv[3].lower() in ("demo", "live"):
             follow = "-f" in sys.argv
-            journal_service = f"mes_{strat}_{sys.argv[3]}.service"
-            run_passthrough(
-                f"journalctl -u {journal_service} "
-                f"{'-f' if follow else '-n 30 --no-pager'}"
-            )
-
+            run_passthrough(f"journalctl -u mes_{strat}_{sys.argv[3]}.service {'-f' if follow else '-n 30 --no-pager'}")
         else:
-            usage()
-
+            help_menu()
     else:
-        usage()
+        help_menu()
