@@ -3,10 +3,10 @@
 """
 Leo System Command – leo
 ================================================
-Version: 1.9.3 (refined daily ops)
-Changes in 1.9.3:
-- leo deploy code now verifies each service restart and reports success/failure per service
-- Clear green/red feedback – no more silent failures
+Version: 1.9.8 (refined daily ops)
+Changes in 1.9.8:
+- Fixed: restored confirm() for edit + install flow
+- leo deploy code [-d] – default restarts all, -d restarts demo services only
 """
 import sys
 import subprocess
@@ -66,7 +66,7 @@ def open_editor(path: Path):
     else:
         red("No editor found (code/vim/nano)")
 
-def confirm(prompt: str) -> bool:
+def confirm(prompt: str) -> bool:  # ← Fixed: back in place!
     while True:
         r = input(f"{prompt} (y/n): ").lower().strip()
         if r in ("y", "yes"):
@@ -76,13 +76,17 @@ def confirm(prompt: str) -> bool:
         print("Please answer y or n.")
 
 # ============================================================
-# Core Deploy Code – now with restart verification
+# Core Deploy Code – -d for demo only
 # ============================================================
 def deploy_code():
     header()
-    yellow("Deploying latest MES code (scalp + swing) to active use...")
+    demo_only = "-d" in sys.argv
 
-    # Copy files
+    if demo_only:
+        yellow("Deploying latest MES code + restarting DEMO services only (safe testing)...")
+    else:
+        yellow("Deploying latest MES code + restarting ALL services...")
+
     try:
         run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
         run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
@@ -92,13 +96,14 @@ def deploy_code():
         red("✖ Copy failed – aborting")
         sys.exit(1)
 
-    # Restart services with feedback
-    services = [
+    all_services = [
         "mes_scalp_demo.service",
         "mes_scalp_live.service",
         "mes_swing_demo.service",
         "mes_swing_live.service",
     ]
+    services = [s for s in all_services if "demo" in s] if demo_only else all_services
+
     print("\nRestarting services...")
     all_good = True
     for svc in services:
@@ -110,8 +115,12 @@ def deploy_code():
             red(f"  ✖ {svc} – restart failed")
             if output.strip():
                 print(f"    → {output.strip().replace(chr(10), ' | ')}")
+
     if all_good:
-        green("\n✔ All services restarted cleanly – ready for demo or live")
+        if demo_only:
+            green("\n✔ Code deployed + demo services restarted – safe for testing")
+        else:
+            green("\n✔ Code deployed + all services restarted – ready for demo or live")
     else:
         yellow("\n⚠ Code deployed but some restarts failed – check journalctl")
 
@@ -121,16 +130,18 @@ def deploy_code():
 def usage():
     header()
     print("Daily commands:\n")
-    print(" leo status       System health overview")
-    print(" leo edit [leo|mes-run] Edit operator tools + optional install")
-    print(" leo deploy code  Copy latest scalp + swing to active use + verify restarts")
-    print(" leo mes          MES operator (mes-run wrapper)")
-    print(" leo update       System package updates")
-    print(" leo reboot       Reboot system (confirm)\n")
+    print(" leo status                  System health overview")
+    print(" leo edit [leo|mes-run]      Edit operator tools + optional install")
+    print(" leo deploy code [-d]        Copy latest scalp + swing to active use")
+    print("                             Default: restarts all services")
+    print("                             With -d: restarts demo services only (safe testing)")
+    print(" leo mes                     MES operator (mes-run wrapper)")
+    print(" leo update                  System package updates")
+    print(" leo reboot                  Reboot system (confirm)\n")
     sys.exit(0)
 
 # ============================================================
-# Commands (unchanged except deploy)
+# Commands
 # ============================================================
 def status():
     header()
