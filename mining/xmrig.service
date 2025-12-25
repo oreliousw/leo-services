@@ -8,8 +8,6 @@ Requires=p2pool.service
 User=ubu
 Group=ubu
 WorkingDirectory=/opt/xmrig
-# Pull wallet from 1Password vault (secure, no plain text)
-Environment=XMRIG_WALLET=$(op item get "XMRIG_WALLET" --field value --reveal)
 ExecStart=/opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
 # Auto-restart on crash or network blip
 Restart=always
