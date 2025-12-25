@@ -1,0 +1,38 @@
+[Unit]
+Description=Monero Full Node (Personal Hardened, Full Blockchain, Mining-Optimized)
+After=network.target
+
+[Service]
+User=ubu
+Group=ubu
+WorkingDirectory=/mnt/monero
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+ExecStart=/usr/local/bin/monerod \
+    --data-dir /mnt/monero/.bitmonero \
+    --rpc-bind-ip 0.0.0.0 \
+    --rpc-bind-port 18081 \
+    --confirm-external-bind \
+    --p2p-bind-ip 0.0.0.0 \
+    --p2p-bind-port 18080 \
+    --zmq-pub tcp://127.0.0.1:18083 \
+    --out-peers 64 \
+    --in-peers 32 \
+    --log-level 1 \
+    --non-interactive \
+    --max-concurrency=2
+
+# Make monerod stay low priority so XMRig dominates
+Nice=10
+IOSchedulingClass=idle
+
+# Limit monerod to cores 0 and 1 only
+CPUAffinity=0 1
+
+LimitNOFILE=4096
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,27 @@
+[Unit]
+Description=P2Pool Full Node (Mr O Build)
+After=network.target monerod.service
+Requires=monerod.service
+
+[Service]
+User=ubu
+Group=ubu
+WorkingDirectory=/home/ubu/.p2pool
+
+ExecStart=/usr/local/bin/p2pool \
+    --host 127.0.0.1 \
+    --rpc-port 18081 \
+    --zmq-port 18083 \
+    --stratum 127.0.0.1:3333 \
+    --wallet 47mCB8ToCw7Vnqgyj4jTknVJdGcWeJX87WinRaCGsKS6NgUjhSLFxNNY9cyNY7oj2vFwddVtLXbng3i1Xn18gXqP2zPEqN6 \
+    --p2p 0.0.0.0:37888 \
+    --data-dir /home/ubu/.p2pool \
+    --data-api /home/ubu/.p2pool/api \
+    --local-api \
+    --loglevel 2
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

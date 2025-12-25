@@ -1,0 +1,25 @@
+[Unit]
+Description=Monero Wallet RPC (View-Only Wallet)
+After=network.target
+
+[Service]
+User=ubu
+Group=ubu
+
+# Adjust if monero-wallet-rpc is installed elsewhere
+ExecStart=/usr/local/bin/monero-wallet-rpc \
+    --wallet-file /home/ubu/wallets/myVault-v \
+    --password "" \
+    --rpc-bind-port 18089 \
+    --rpc-bind-ip 127.0.0.1 \
+    --disable-rpc-login \
+    --log-level 1 \
+    --daemon-address 127.0.0.1:18081 \
+    --trusted-daemon \
+    --confirm-external-bind
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

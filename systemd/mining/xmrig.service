@@ -1,0 +1,18 @@
+[Unit]
+Description=XMRig Miner (Mr O — Full CPU Build)
+After=network.target p2pool.service
+Requires=p2pool.service
+
+[Service]
+User=ubu
+Group=ubu
+WorkingDirectory=/opt/xmrig
+ExecStart=/opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
+Restart=always
+Nice=10
+CPUWeight=90
+CapabilityBoundingSet=CAP_SYS_RAWIO
+AmbientCapabilities=CAP_SYS_RAWIO
+
+[Install]
+WantedBy=multi-user.target
