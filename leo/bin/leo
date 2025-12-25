@@ -3,21 +3,15 @@
 """
 Leo System Command – leo
 ================================================
-Version: 1.9.0 (refined daily ops)
-
+Version: 1.9.2 (refined daily ops)
 Purpose:
 - Lean operator interface for daily MES management
 - Enforces safe SOURCE → DEPLOY workflow
-- Only commands you actually use
-
-Changes in 1.9.0:
-- Removed unused: govern, logs menu, direct reboot
-- Combined edit + install flow for operator tools
-- Kept essential: status, mes, deploy, update
-- Simplified menu and prompts
-- Clarified deploy lines: play money vs real money
+Changes in 1.9.2:
+- Simplified: only 'leo deploy code' for pushing updates
+- Removed demo/live deploy options (code is identical anyway)
+- Risk lives in mes-run / service env, not deploy
 """
-
 import sys
 import subprocess
 from datetime import datetime
@@ -27,25 +21,19 @@ from pathlib import Path
 # ============================================================
 # Paths
 # ============================================================
-
 LEO_SRC = Path.home() / "leo-services" / "leo" / "bin"
 MES_SCALP_SRC = Path.home() / "leo-services" / "mes" / "mes_scalp.py"
 MES_SWING_SRC = Path.home() / "leo-services" / "mes" / "mes_swing.py"
-
 MES_SCALP_DEST = Path("/opt/mes/mes_scalp.py")
 MES_SWING_DEST = Path("/opt/mes/mes_swing.py")
-
 EDITABLE_FILES = {
     "mes-run": LEO_SRC / "mes-run",
-    "leo":     LEO_SRC / "leo",
-    # Add others if you edit them often, e.g.:
-    # "leo-install": LEO_SRC / "leo-install",
+    "leo": LEO_SRC / "leo",
 }
 
 # ============================================================
 # Helpers
 # ============================================================
-
 def run(cmd: str):
     subprocess.run(cmd, shell=True, check=True)
 
@@ -70,7 +58,7 @@ def open_editor(path: Path):
         red(f"File not found: {path}")
         return
     if has_cmd("code"):
-        run(f"code --wait {path}")  # --wait returns when closed
+        run(f"code --wait {path}")
     elif has_cmd("vim"):
         run(f"vim {path}")
     elif has_cmd("nano"):
@@ -88,25 +76,38 @@ def confirm(prompt: str) -> bool:
         print("Please answer y or n.")
 
 # ============================================================
+# Core Deploy Code
+# ============================================================
+def deploy_code():
+    header()
+    yellow("Deploying latest MES code (scalp + swing) to active use...")
+    try:
+        run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
+        run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
+        run(f"sudo chmod 644 {MES_SCALP_DEST} {MES_SWING_DEST}")
+    except subprocess.CalledProcessError:
+        red("Copy failed")
+        sys.exit(1)
+    run("sudo systemctl restart mes_scalp_demo.service mes_scalp_live.service mes_swing_demo.service mes_swing_live.service 2>/dev/null || true")
+    green("✔ Latest code deployed – ready for demo or live services")
+
+# ============================================================
 # Usage
 # ============================================================
-
 def usage():
     header()
     print("Daily commands:\n")
-    print("  leo status             System health overview")
-    print("  leo edit [leo|mes-run] Edit operator tools + optional install")
-    print("  leo deploy demo        Deploy MES to demo (play money – safe testing)")
-    print("  leo deploy live        Deploy MES to live (with confirm – real money)")
-    print("  leo mes                MES operator (mes-run wrapper)")
-    print("  leo update             System package updates")
-    print("  leo reboot             Reboot system (confirm)\n")
+    print(" leo status       System health overview")
+    print(" leo edit [leo|mes-run] Edit operator tools + optional install")
+    print(" leo deploy code  Copy latest scalp + swing to active use")
+    print(" leo mes          MES operator (mes-run wrapper)")
+    print(" leo update       System package updates")
+    print(" leo reboot       Reboot system (confirm)\n")
     sys.exit(0)
 
 # ============================================================
 # Commands
 # ============================================================
-
 def status():
     header()
     run("uptime")
@@ -123,21 +124,17 @@ def edit():
     if len(sys.argv) == 2:
         print("Editable operator files:\n")
         for k in EDITABLE_FILES:
-            print(f"  leo edit {k}")
+            print(f" leo edit {k}")
         print("")
         return
-
     target = sys.argv[2].lower()
     if target not in EDITABLE_FILES:
         red(f"Unknown target: {target}")
         edit()
         return
-
     path = EDITABLE_FILES[target]
     print(f"Opening {path} ...")
     open_editor(path)
-
-    # After edit, offer install
     if confirm(f"Install updated {target} now?"):
         installer = LEO_SRC / "leo-install"
         if not installer.exists():
@@ -147,32 +144,7 @@ def edit():
         green(f"\n✔ {target} installed")
 
 def deploy():
-    header()
-    if len(sys.argv) != 3:
-        red("Usage: leo deploy {demo|live}")
-        sys.exit(1)
-
-    env = sys.argv[2].lower()
-    if env not in ("demo", "live"):
-        red("Invalid environment")
-        sys.exit(1)
-
-    if env == "live" and not confirm("Deploy to LIVE?"):
-        red("Deploy aborted")
-        sys.exit(0)
-
-    yellow(f"Deploying MES to {env.upper()}...")
-    try:
-        run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
-        run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
-        run(f"sudo chmod 644 {MES_SCALP_DEST} {MES_SWING_DEST}")
-    except subprocess.CalledProcessError:
-        red("Copy failed")
-        sys.exit(1)
-
-    run(f"sudo systemctl restart mes_scalp_{env}.service")
-    run(f"sudo systemctl restart mes_swing_{env}.service")
-    green(f"✔ MES deployed to {env.upper()}")
+    deploy_code()  # only one deploy path now
 
 def mes():
     if len(sys.argv) > 2:
@@ -195,13 +167,10 @@ def reboot():
 # ============================================================
 # Entrypoint
 # ============================================================
-
 if __name__ == "__main__":
     if len(sys.argv) == 1 or sys.argv[1] in ("help", "-h", "--help"):
         usage()
-
     cmd = sys.argv[1].lower()
-
     if cmd == "status":
         status()
     elif cmd == "edit":
