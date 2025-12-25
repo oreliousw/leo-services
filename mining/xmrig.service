@@ -1,0 +1,28 @@
+[Unit]
+Description=XMRig Miner (Mr O — Full CPU Build, HugePages enabled)
+After=network-online.target p2pool.service
+Wants=network-online.target
+Requires=p2pool.service
+
+[Service]
+User=ubu
+Group=ubu
+WorkingDirectory=/opt/xmrig
+# Pull wallet from 1Password vault (secure, no plain text)
+Environment=XMRIG_WALLET=$(op item get "XMRIG_WALLET" --field value --reveal)
+ExecStart=/opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
+# Auto-restart on crash or network blip
+Restart=always
+RestartSec=10
+# Keep miner polite—lower priority than critical tasks
+Nice=10
+CPUWeight=90
+IOSchedulingClass=idle
+# HugePages for RandomX performance
+CapabilityBoundingSet=CAP_SYS_RAWIO
+AmbientCapabilities=CAP_SYS_RAWIO
+# Optional: pin to all cores except 0-1 (reserved for monerod)
+# CPUAffinity=2~
+
+[Install]
+WantedBy=multi-user.target
