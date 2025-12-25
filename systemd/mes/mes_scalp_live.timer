@@ -1,0 +1,10 @@
+[Unit]
+Description=MES Scalp Trader LIVE Timer (30 min)
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

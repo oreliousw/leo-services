@@ -1,0 +1,24 @@
+[Unit]
+Description=MES Scalp Trader DEMO (30 min cycle – play money)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubu
+WorkingDirectory=/opt/mes
+# Pull global OP vars if needed
+EnvironmentFile=/etc/op.env
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/mes/env_demo.op.env \
+  -- /opt/mes/env_use_demo.sh \
+  /opt/mes/venv/bin/python \
+  /opt/mes/mes_scalp.py --risk 0.02
+StandardOutput=journal
+StandardError=journal
+# Resilience: retry on crash
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

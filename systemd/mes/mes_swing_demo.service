@@ -1,0 +1,38 @@
+[Unit]
+Description=MES Swing Trader (DEMO)
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubu
+Group=ubu
+WorkingDirectory=/opt/mes
+
+# Ensure HOME is set for op + Python
+Environment=HOME=/home/ubu
+
+# 🔐 1Password service account token
+EnvironmentFile=/etc/op.env
+
+# DEMO secrets + environment mapping
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/mes/env_demo.op.env \
+  -- /opt/mes/env_use_demo.sh \
+  /opt/mes/venv/bin/python \
+  /opt/mes/mes_swing.py
+
+# Scheduling & safety (matches scalper expectations)
+Nice=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+# 🔐 Allow 1Password to write its config only
+ProtectHome=read-only
+ReadWritePaths=/home/ubu/.config/op
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MES Swing Trader (DEMO) hourly
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MES Swing LIVE every 4 hours
+
+[Timer]
+OnCalendar=*-*-* 01,05,09,13,17,21:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+# File location /etc/systemd/system/mes_swing_live.timer

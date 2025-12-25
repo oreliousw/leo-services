@@ -1,0 +1,12 @@
+[Unit]
+Description=MES Scalp Trader DEMO timer (every 30 min)
+Requires=mes_scalp_demo.service
+
+[Timer]
+OnCalendar=*:00,30
+AccuracySec=1s
+Persistent=true
+Unit=mes_scalp_demo.service
+
+[Install]
+WantedBy=timers.target

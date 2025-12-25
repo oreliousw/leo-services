@@ -1,0 +1,48 @@
+[Unit]
+Description=MES Swing Trader (LIVE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubu
+Group=ubu
+WorkingDirectory=/opt/mes
+
+# REQUIRED for 1Password CLI
+Environment=HOME=/home/ubu
+
+# Load 1Password service account token
+EnvironmentFile=/etc/op.env
+
+# LIVE arming + risk controls
+Environment="MES_SWING_ARMED=YES"
+Environment="SWING_RISK_PCT_LIVE=0.0025"
+Environment="SWING_MAX_MARGIN_FRAC_LIVE=0.10"
+Environment="SWING_MAX_OPEN_POSITIONS=2"
+
+# Execute via 1Password, injecting LIVE secrets
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/mes/env_live.op.env \
+  -- /opt/mes/env_use_live.sh \
+  /opt/mes/venv/bin/python \
+  /opt/mes/mes_swing.py --allow-live
+
+# Scheduling & safety
+Nice=0
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+# 🔐 Allow 1Password to write its config only
+ProtectHome=read-only
+ReadWritePaths=/home/ubu/.config/op
+
+# Hard fail, no restart loops
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
