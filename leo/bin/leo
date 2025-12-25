@@ -3,14 +3,10 @@
 """
 Leo System Command – leo
 ================================================
-Version: 1.9.2 (refined daily ops)
-Purpose:
-- Lean operator interface for daily MES management
-- Enforces safe SOURCE → DEPLOY workflow
-Changes in 1.9.2:
-- Simplified: only 'leo deploy code' for pushing updates
-- Removed demo/live deploy options (code is identical anyway)
-- Risk lives in mes-run / service env, not deploy
+Version: 1.9.3 (refined daily ops)
+Changes in 1.9.3:
+- leo deploy code now verifies each service restart and reports success/failure per service
+- Clear green/red feedback – no more silent failures
 """
 import sys
 import subprocess
@@ -34,8 +30,12 @@ EDITABLE_FILES = {
 # ============================================================
 # Helpers
 # ============================================================
-def run(cmd: str):
-    subprocess.run(cmd, shell=True, check=True)
+def run(cmd: str, capture=False):
+    if capture:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        return result.returncode == 0, result.stdout + result.stderr
+    else:
+        subprocess.run(cmd, shell=True, check=True)
 
 def red(text: str):
     print(f"\033[91m{text}\033[0m")
@@ -76,20 +76,44 @@ def confirm(prompt: str) -> bool:
         print("Please answer y or n.")
 
 # ============================================================
-# Core Deploy Code
+# Core Deploy Code – now with restart verification
 # ============================================================
 def deploy_code():
     header()
     yellow("Deploying latest MES code (scalp + swing) to active use...")
+
+    # Copy files
     try:
         run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
         run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
         run(f"sudo chmod 644 {MES_SCALP_DEST} {MES_SWING_DEST}")
+        green("✔ Files copied successfully")
     except subprocess.CalledProcessError:
-        red("Copy failed")
+        red("✖ Copy failed – aborting")
         sys.exit(1)
-    run("sudo systemctl restart mes_scalp_demo.service mes_scalp_live.service mes_swing_demo.service mes_swing_live.service 2>/dev/null || true")
-    green("✔ Latest code deployed – ready for demo or live services")
+
+    # Restart services with feedback
+    services = [
+        "mes_scalp_demo.service",
+        "mes_scalp_live.service",
+        "mes_swing_demo.service",
+        "mes_swing_live.service",
+    ]
+    print("\nRestarting services...")
+    all_good = True
+    for svc in services:
+        success, output = run(f"sudo systemctl restart {svc}", capture=True)
+        if success:
+            green(f"  ✔ {svc}")
+        else:
+            all_good = False
+            red(f"  ✖ {svc} – restart failed")
+            if output.strip():
+                print(f"    → {output.strip().replace(chr(10), ' | ')}")
+    if all_good:
+        green("\n✔ All services restarted cleanly – ready for demo or live")
+    else:
+        yellow("\n⚠ Code deployed but some restarts failed – check journalctl")
 
 # ============================================================
 # Usage
@@ -99,14 +123,14 @@ def usage():
     print("Daily commands:\n")
     print(" leo status       System health overview")
     print(" leo edit [leo|mes-run] Edit operator tools + optional install")
-    print(" leo deploy code  Copy latest scalp + swing to active use")
+    print(" leo deploy code  Copy latest scalp + swing to active use + verify restarts")
     print(" leo mes          MES operator (mes-run wrapper)")
     print(" leo update       System package updates")
     print(" leo reboot       Reboot system (confirm)\n")
     sys.exit(0)
 
 # ============================================================
-# Commands
+# Commands (unchanged except deploy)
 # ============================================================
 def status():
     header()
@@ -144,7 +168,7 @@ def edit():
         green(f"\n✔ {target} installed")
 
 def deploy():
-    deploy_code()  # only one deploy path now
+    deploy_code()
 
 def mes():
     if len(sys.argv) > 2:
