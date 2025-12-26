@@ -124,8 +124,8 @@ OANDA_API_TOKEN = os.getenv("OANDA_API_TOKEN", config.get("OANDA_API_KEY", ""))
 OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", config.get("OANDA_ACCOUNT_ID", ""))
 OANDA_REST_URL = os.getenv("OANDA_API_URL", "").rstrip("/")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", config.get("TELEGRAM_BOT_TOKEN", ""))
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", config.get("TELEGRAM_CHAT_ID", ""))
+TELEGRAM_FOREX_TOKEN = os.getenv("TELEGRAM_FOREX_TOKEN", config.get("TELEGRAM_FOREX_TOKEN", ""))
+TELEGRAM_FOREX_CHAT_ID = os.getenv("TELEGRAM_FOREX_CHAT_ID", config.get("TELEGRAM_FOREX_CHAT_ID", ""))
 
 HEADERS = {
     "Authorization": f"Bearer {OANDA_API_TOKEN}",
@@ -150,8 +150,8 @@ DEFAULT_RISK_PCT = DEMO_SCALP_RISK_PCT if MODE == "DEMO" else LIVE_SCALP_RISK_PC
 
 VERSION = f"MES v3.5.1 {MODE}"
 
-has_tg = bool(TELEGRAM_BOT_TOKEN.strip()) == bool(TELEGRAM_CHAT_ID.strip())
-if TELEGRAM_BOT_TOKEN and not has_tg:
+has_tg = bool(TELEGRAM_FOREX_TOKEN.strip()) == bool(TELEGRAM_FOREX_CHAT_ID.strip())
+if TELEGRAM_FOREX_TOKEN and not has_tg:
     raise RuntimeError("Telegram token/chat mismatch")
 
 logging.info(f"[MES] Auth OK | Running in {MODE} mode | Base risk: {DEFAULT_RISK_PCT*100:.2f}% | URL: {OANDA_REST_URL}")
@@ -181,12 +181,12 @@ def get_instrument_info(instrument: str) -> Tuple[float, int]:
 # TELEGRAM
 # ============================================================
 def telegram_send(msg: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    if not TELEGRAM_FOREX_TOKEN or not TELEGRAM_FOREX_CHAT_ID:
         return
     try:
         requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
+            f"https://api.telegram.org/bot{TELEGRAM_FOREX_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_FOREX_CHAT_ID, "text": msg, "parse_mode": "HTML"},
             timeout=10,
         )
     except Exception as e:
