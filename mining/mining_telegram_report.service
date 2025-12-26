@@ -1,0 +1,6 @@
+[Unit]
+Description=Mining Telegram Report (hourly)
+
+[Service]
+Type=oneshot
+ExecStart=/home/ubu/leo-services/mining/mining_telegram_report.py
