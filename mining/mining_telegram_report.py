@@ -7,14 +7,14 @@ import os
 # Config
 XMRIG_API = "http://127.0.0.1:18092/1/summary"
 TOKEN = "mro-token"
-TELEGRAM_MINING_TOKEN = os.getenv("TELEGRAM_MINING_TOKEN")
-TELEGRAM_MINING_CHAT_ID = os.getenv("TELEGRAM_MINING_CHAT_ID")
+MINING_TOKEN = os.getenv("MINING_TOKEN")
+TELEGRAM_ID = os.getenv("TELEGRAM_ID")
 
 def tg(msg):
-    if TELEGRAM_MINING_TOKEN and TELEGRAM_MINING_CHAT_ID:
+    if MINING_TOKEN and TELEGRAM_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_MINING_TOKEN}/sendMessage",
-                          json={"chat_id": TELEGRAM_MINING_CHAT_ID, "text": msg, "parse_mode": "HTML"})
+            requests.post(f"https://api.telegram.org/bot{MINING_TOKEN}/sendMessage",
+                          json={"chat_id": TELEGRAM_ID, "text": msg, "parse_mode": "HTML"})
         except: pass
 
 try:

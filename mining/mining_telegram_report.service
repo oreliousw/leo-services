@@ -3,4 +3,9 @@ Description=Mining Telegram Report (hourly)
 
 [Service]
 Type=oneshot
-ExecStart=/home/ubu/leo-services/mining/mining_telegram_report.py
+User=ubu
+WorkingDirectory=/home/ubu/leo-services/mining
+EnvironmentFile=/etc/op.env  # Global service token
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/xmrig/env_mining.op.env \
+  -- /usr/bin/python3 /home/ubu/leo-services/mining/mining_telegram_report.py

@@ -8,17 +8,17 @@ Requires=p2pool.service
 User=ubu
 Group=ubu
 WorkingDirectory=/opt/xmrig
-# Pull wallet from 1Password vault (secure, no plain text)
-Environment=XMRIG_WALLET=$(op item get "XMRIG_WALLET" --field value --reveal)
-ExecStart=/opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
-# Auto-restart on crash or network blip
+# Global 1Password auth (service token)
+EnvironmentFile=/etc/op.env
+# Mining-specific secrets (wallet + Telegram mining bot)
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/xmrig/env_mining.op.env \
+  -- /opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
 Restart=always
 RestartSec=10
-# Keep miner polite—lower priority than critical tasks
 Nice=10
 CPUWeight=90
 IOSchedulingClass=idle
-# HugePages for RandomX performance
 CapabilityBoundingSet=CAP_SYS_RAWIO
 AmbientCapabilities=CAP_SYS_RAWIO
 # Optional: pin to all cores except 0-1 (reserved for monerod)
