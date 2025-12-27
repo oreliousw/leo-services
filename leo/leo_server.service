@@ -1,0 +1,11 @@
+[Unit]
+Description=Leo Server Telegram Report (hourly)
+
+[Service]
+Type=oneshot
+User=ubu
+WorkingDirectory=/home/ubu/leo-services/leo
+EnvironmentFile=/etc/op.env 
+ExecStart=/usr/bin/op run \
+  --env-file=/opt/xmrig/env_mining.op.env \
+  -- /usr/bin/python3 /home/ubu/leo-services/leo/leo_server_report.py
