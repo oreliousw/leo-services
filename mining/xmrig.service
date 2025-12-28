@@ -1,3 +1,4 @@
+# /etc/systemd/system/xmrig.service
 [Unit]
 Description=XMRig Miner (Mr O — Full CPU Build, HugePages enabled)
 After=network-online.target p2pool.service
@@ -8,21 +9,27 @@ Requires=p2pool.service
 User=ubu
 Group=ubu
 WorkingDirectory=/opt/xmrig
-# Global 1Password auth (service token)
+
+# Global 1Password session env (service token)
 EnvironmentFile=/etc/op.env
-# Mining-specific secrets (wallet + Telegram mining bot)
-ExecStart=/usr/bin/op run \
-  --env-file=/opt/xmrig/env_mining.op.env \
-  -- /opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
+
+# Launch via repo-tracked wrapper script (env -> exec xmrig)
+ExecStart=/home/ubu/leo-services/scripts/start_xmrig.sh
+
+# Restart + scheduling behavior
 Restart=always
 RestartSec=10
 Nice=10
 CPUWeight=90
 IOSchedulingClass=idle
+
+# Hardware / security capabilities
 CapabilityBoundingSet=CAP_SYS_RAWIO
 AmbientCapabilities=CAP_SYS_RAWIO
-# Optional: pin to all cores except 0-1 (reserved for monerod)
+
+# Optional: reserve cores 0-1 for monerod
 # CPUAffinity=2~
 
 [Install]
 WantedBy=multi-user.target
+

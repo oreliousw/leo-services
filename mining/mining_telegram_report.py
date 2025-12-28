@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
-import requests
+"""
+Leo Mining Telegram Report – v3.5
+Now aligned to P2Pool filesystem API (/home/ubu/.p2pool/api/stats_mod)
+Matches dashboard P2Pool fields
+"""
+
 import os
+import json
+import requests
 from datetime import datetime
 
 TOKEN = "mro-token"
 MINING_TOKEN = os.getenv("MINING_TOKEN")
 TELEGRAM_ID = os.getenv("TELEGRAM_ID")
 
-# XMRig stays on native API (works reliably)
-API_XMRIG = "http://127.0.0.1:18092/1/summary"
+MONEROD_RPC = "http://127.0.0.1:18081/json_rpc"
+WALLET_RPC  = "http://127.0.0.1:18089/json_rpc"
 
-# Dashboard API sources
-BASE = "http://127.0.0.1:8080"
-API_DAEMON = f"{BASE}/monero"
-API_P2POOL = f"{BASE}/p2pool"
-API_WALLET = f"{BASE}/wallet"
+API_XMRIG = "http://127.0.0.1:18092/2/summary"
+P2POOL_STATS = "/home/ubu/.p2pool/api/stats_mod"
 
 
-# ---------- Telegram ----------
-def tg(msg):
+# ─────────────────────────────────────────────────────────
+# Telegram
+# ─────────────────────────────────────────────────────────
+def tg(msg: str):
     if not (MINING_TOKEN and TELEGRAM_ID):
         return
     try:
@@ -31,18 +37,9 @@ def tg(msg):
         pass
 
 
-# ---------- Helpers ----------
-def fetch_json(url, headers=None):
-    try:
-        r = requests.get(url, headers=headers or {}, timeout=5)
-        d = r.json()
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
-
-def as_dict(v):  return v if isinstance(v, dict) else {}
-def as_list(v):  return v if isinstance(v, list) else []
-
+# ─────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────
 def atomic_to_xmr(v):
     try:
         return float(v) / 1e12
@@ -50,14 +47,61 @@ def atomic_to_xmr(v):
         return 0.0
 
 
-# ---------- MAIN ----------
+def as_dict(v):
+    return v if isinstance(v, dict) else {}
+
+
+def as_list(v):
+    return v if isinstance(v, list) else []
+
+
+def rpc_call(url: str, method: str, params=None):
+    payload = {"jsonrpc": "2.0", "id": "0", "method": method}
+    if params:
+        payload["params"] = params
+    try:
+        r = requests.post(
+            url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=4,
+        )
+        j = r.json()
+        return j.get("result", {}) if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_json_file(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def fmt_hashrate(h):
+    try:
+        h = float(h)
+        if h >= 1e6:  return f"{h/1e6:.2f} MH/s"
+        if h >= 1e3:  return f"{h/1e3:.2f} kH/s"
+        return f"{h:.0f} H/s"
+    except Exception:
+        return "N/A"
+
+
+# ─────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────
 try:
-    # XMRIG (native endpoint)
-    miner = as_dict(fetch_json(API_XMRIG, {"Authorization": f"Bearer {TOKEN}"}))
+    # XMRIG
+    miner = as_dict(
+        requests.get(API_XMRIG,
+                     headers={"Authorization": f"Bearer {TOKEN}"},
+                     timeout=4).json()
+    )
 
     hr_vals = as_list(as_dict(miner.get("hashrate")).get("total"))
     hashrate = hr_vals[0] if hr_vals else 0
-
     uptime = miner.get("uptime", 0)
 
     huge = as_dict(miner.get("huge_pages") or miner.get("hugepages"))
@@ -65,37 +109,51 @@ try:
     huge_total = huge.get("total", 0)
     huge_pct = huge.get("percentage", 0)
 
-    # NODE
-    node = as_dict(fetch_json(API_DAEMON))
+    # MONEROD
+    node = as_dict(rpc_call(MONEROD_RPC, "get_info"))
     height = node.get("height", "-")
     diff = node.get("difficulty", "-")
     peers_in = node.get("incoming_connections_count", 0)
     peers_out = node.get("outgoing_connections_count", 0)
 
-    # P2POOL
-    p2p = as_dict(fetch_json(API_P2POOL))
-    p2p_height = p2p.get("height", "-")
-    p2p_diff = p2p.get("difficulty", "-")
-    p2p_reward = atomic_to_xmr(p2p.get("reward"))
-    p2p_peers = p2p.get("peers", "-")
+    # P2POOL – filesystem API
+    p2p = as_dict(load_json_file(P2POOL_STATS))
+
+    net = as_dict(p2p.get("network"))
+    pool = as_dict(p2p.get("pool"))
+    pstats = as_dict(pool.get("stats"))
+
+    p2p_height = net.get("height", "-")
+    p2p_miners = pool.get("miners", "-")
+    p2p_hashrate = fmt_hashrate(pool.get("hashrate", 0))
+    p2p_round = pool.get("roundHashes", "-")
+
+    last_block = pstats.get("lastBlockFound")
+    try:
+        # convert epoch ms → readable UTC
+        last_block_ts = datetime.utcfromtimestamp(int(last_block)/1000).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        last_block_ts = "N/A"
 
     # WALLET
-    wallet = as_dict(fetch_json(API_WALLET))
-    balance = atomic_to_xmr(wallet.get("balance"))
-    unlocked = atomic_to_xmr(wallet.get("unlocked_balance"))
+    wallet = as_dict(rpc_call(WALLET_RPC, "get_balance"))
+    balance = atomic_to_xmr(wallet.get("balance", 0))
+    unlocked = atomic_to_xmr(wallet.get("unlocked_balance", 0))
+
+    txs = rpc_call(WALLET_RPC, "get_transfers", {"in": True})
+    inbound = as_list(txs.get("in")) if isinstance(txs, dict) else as_list(txs)
 
     rewards = []
-    for tx in as_list(wallet.get("in"))[:5]:
+    for tx in inbound[-5:]:
         tx = as_dict(tx)
-        amt = atomic_to_xmr(tx.get("amount"))
-        conf = tx.get("confirmations", 0)
-        h = tx.get("height", "-")
-        rewards.append(f"{amt:.4f} XMR ({conf} conf @ {h})")
-
+        amt = atomic_to_xmr(tx.get("amount", 0))
+        h = tx.get("height", "?")
+        rewards.append(f"{amt:.4f} XMR (h={h})")
     rewards_text = "\n".join(rewards) if rewards else "None"
 
-
-    # ---------- REPORT ----------
+    # ─────────────────────────────────────────────────────
+    # REPORT
+    # ─────────────────────────────────────────────────────
     msg = f"<b>⛏ Leo Mining Report</b>\n"
     msg += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 
@@ -109,11 +167,12 @@ try:
     msg += f"Difficulty: {diff}\n"
     msg += f"Peers: In {peers_in} / Out {peers_out}\n\n"
 
-    msg += "<b>⛓ P2Pool</b>\n"
+    msg += "<b>🏊 P2Pool</b>\n"
     msg += f"Height: {p2p_height}\n"
-    msg += f"Difficulty: {p2p_diff}\n"
-    msg += f"Reward: {p2p_reward:.6f} XMR\n"
-    msg += f"Peers: {p2p_peers}\n\n"
+    msg += f"Miners: {p2p_miners}\n"
+    msg += f"Hashrate: {p2p_hashrate}\n"
+    msg += f"Round Hashes: {p2p_round}\n"
+    msg += f"Last Block: {last_block_ts} UTC\n\n"
 
     msg += "<b>💰 Wallet</b>\n"
     msg += f"Balance: {balance:.6f} XMR\n"
