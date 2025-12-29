@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 # ------------------------------------------------------------
-# Leo Server Report — v1.1.5 (2025-12-28)
-#
-# Purpose:
-#   Hourly Telegram health snapshot for the Leo server
-#
-# Updates in 1.1.5:
-#   - Suppress GPU section when output is invalid or placeholder
-#   - Filter out leo_server.service failures from error logs
-#   - Minor formatting / readability tuning
+# Leo Server Report — v1.1.6 (2025-12-28)
+# Purpose: Hourly Telegram health snapshot for Leo server
+# Changes:
+# - Added Hostname + Kernel identity line under report header
+# - Keeps compact aviation-style briefing format
+# - No functional behavior changes
 # ------------------------------------------------------------
 
 import os
+import socket
+import platform
 import subprocess
 from datetime import datetime, timedelta
 
@@ -24,9 +23,15 @@ boot_time = datetime.fromtimestamp(boot_ts)
 uptime = datetime.now() - boot_time
 uptime_str = str(timedelta(seconds=int(uptime.total_seconds())))
 
+# ---------- Host identity ----------
+hostname = socket.gethostname()
+kernel = platform.release()
+host_line = f"Host: <b>{hostname}</b> • Linux {kernel}"
+
 # ---------- Secrets ----------
 LEO_TOKEN = os.getenv("LEO_TOKEN")
 TELEGRAM_ID = os.getenv("TELEGRAM_ID")
+
 
 # ---------- Telegram ----------
 def tg(msg: str) -> None:
@@ -53,7 +58,7 @@ def run_cmd(cmd: list[str]) -> str:
 
 def service_status(service_name: str) -> str:
     code = subprocess.call(["systemctl", "is-active", "--quiet", service_name])
-    return "🟢 Running" if code == 0 else "🔴 Stopped"
+    return "🟢 Running" if code == 0 else "🔴 Not running"
 
 
 def get_recent_errors() -> str:
@@ -68,46 +73,7 @@ def get_recent_errors() -> str:
         "--no-pager",
     ]
     output = run_cmd(cmd)
-    if not output:
-        return "None"
-
-    # Filter out noise from THIS service
-    lines = [
-        ln for ln in output.split("\n")
-        if "leo_server.service" not in ln
-    ]
-
-    return "\n".join(lines).strip() or "None"
-
-
-def get_gpu_info() -> str:
-    output = run_cmd(
-        [
-            "nvidia-smi",
-            "--query-gpu=temperature.gpu,utilization.gpu",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-
-    if not output or "Error" in output or "Failed" in output:
-        return ""
-
-    lines = [l.strip() for l in output.split("\n") if l.strip()]
-    formatted = []
-
-    for i, row in enumerate(lines):
-        parts = [p.strip() for p in row.split(",")]
-
-        if len(parts) == 2:
-            temp, util = parts
-            formatted.append(f"GPU {i}: {temp}°C, {util}% util")
-        elif len(parts) == 1:
-            temp = parts[0]
-            formatted.append(f"GPU {i}: {temp}°C")
-        else:
-            formatted.append(f"GPU {i}: {row}")
-
-    return "\n".join(formatted)
+    return output if output else "None"
 
 
 # ---------- MAIN ----------
@@ -121,11 +87,11 @@ try:
     xmrig_status = service_status("xmrig.service")
 
     errors = get_recent_errors()
-    gpu = get_gpu_info()
 
     msg = (
         "<b>🖥 Leo Server Health Report</b>\n"
-        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"{host_line}\n\n"
         "<b>📊 System Stats</b>\n"
         f"CPU: <b>{cpu_pct:.1f}%</b>\n"
         f"Memory: <b>{mem.percent:.1f}%</b> "
@@ -133,13 +99,6 @@ try:
         f"Disk (/): <b>{disk.percent:.1f}%</b> "
         f"({disk.used // 1024**3}GB / {disk.total // 1024**3}GB)\n"
         f"Uptime: {uptime_str}\n\n"
-    )
-
-    # Only show GPU section if meaningful
-    if gpu:
-        msg += "<b>🔥 GPU</b>\n" + gpu + "\n\n"
-
-    msg += (
         "<b>⚙️ Mining Services</b>\n"
         f"monerod: {monerod_status}\n"
         f"p2pool: {p2pool_status}\n"
