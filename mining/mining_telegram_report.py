@@ -1,14 +1,22 @@
+# Project: Leo Services
+# File: mining_telegram_report.py
+# Version: v3.5.4 — 2025-12-29
+# Change: Huge Pages metric now falls back to parsing XMRig journald logs ("huge pages X/X") instead of /proc smaps.
+# Note: Bump Version + Change when modifying runtime behavior
+
 #!/usr/bin/env python3
 """
-Leo Mining Telegram Report – v3.5
-Now aligned to P2Pool filesystem API (/home/ubu/.p2pool/api/stats_mod)
+Leo Mining Telegram Report – v3.5.4
+Aligned to P2Pool filesystem API (/home/ubu/.p2pool/api/stats_mod)
 Matches dashboard P2Pool fields
 """
 
 import os
+import re
 import json
 import requests
-from datetime import datetime
+import subprocess
+from datetime import datetime, UTC
 
 TOKEN = "mro-token"
 MINING_TOKEN = os.getenv("MINING_TOKEN")
@@ -93,21 +101,51 @@ def fmt_hashrate(h):
 # MAIN
 # ─────────────────────────────────────────────────────────
 try:
-    # XMRIG
+    # XMRIG API
     miner = as_dict(
-        requests.get(API_XMRIG,
-                     headers={"Authorization": f"Bearer {TOKEN}"},
-                     timeout=4).json()
+        requests.get(
+            API_XMRIG,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            timeout=4
+        ).json()
     )
 
     hr_vals = as_list(as_dict(miner.get("hashrate")).get("total"))
     hashrate = hr_vals[0] if hr_vals else 0
     uptime = miner.get("uptime", 0)
 
+    # Huge Pages — try API fields first
     huge = as_dict(miner.get("huge_pages") or miner.get("hugepages"))
     huge_used = huge.get("used", 0)
     huge_total = huge.get("total", 0)
     huge_pct = huge.get("percentage", 0)
+
+    # ─────────────────────────────────────────────
+    # Fallback: parse XMRig journald logs
+    # ─────────────────────────────────────────────
+    if not huge_used or not huge_total:
+        try:
+            out = subprocess.check_output(
+                ["journalctl", "-u", "xmrig.service", "-n", "80"],
+                text=True
+            )
+            # Look for lines like:
+            # randomx  allocated ... huge pages 100% 3/3 +JIT
+            # cpu      READY ... huge pages 100% 8/8 ...
+            m = re.findall(r"huge pages\s+\d+%\s+(\d+)/(\d+)", out, re.IGNORECASE)
+            if m:
+                last = m[-1]  # use the most recent match
+                huge_used = int(last[0])
+                huge_total = int(last[1])
+                huge_pct = round((huge_used / huge_total) * 100, 1) if huge_total else 0
+            else:
+                huge_used = huge_used or 0
+                huge_total = huge_total or 0
+                huge_pct = huge_pct or 0
+        except Exception:
+            huge_used = huge_used or 0
+            huge_total = huge_total or 0
+            huge_pct = huge_pct or 0
 
     # MONEROD
     node = as_dict(rpc_call(MONEROD_RPC, "get_info"))
@@ -130,8 +168,8 @@ try:
 
     last_block = pstats.get("lastBlockFound")
     try:
-        # convert epoch ms → readable UTC
-        last_block_ts = datetime.utcfromtimestamp(int(last_block)/1000).strftime("%Y-%m-%d %H:%M:%S")
+        ts = int(last_block) / 1000
+        last_block_ts = datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         last_block_ts = "N/A"
 
@@ -151,9 +189,9 @@ try:
         rewards.append(f"{amt:.4f} XMR (h={h})")
     rewards_text = "\n".join(rewards) if rewards else "None"
 
-    # ─────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     # REPORT
-    # ─────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     msg = f"<b>⛏ Leo Mining Report</b>\n"
     msg += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 

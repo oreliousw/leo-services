@@ -9,6 +9,8 @@ Requires=p2pool.service
 User=ubu
 Group=ubu
 WorkingDirectory=/opt/xmrig
+LimitMEMLOCK=infinity
+LimitMEMLOCKSoft=infinity
 
 # Global 1Password session env (service token)
 EnvironmentFile=/etc/op.env
@@ -32,4 +34,3 @@ AmbientCapabilities=CAP_SYS_RAWIO
 
 [Install]
 WantedBy=multi-user.target
-

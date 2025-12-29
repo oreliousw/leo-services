@@ -20,4 +20,4 @@ done < "$ENV_OUT"
 rm -f "$ENV_OUT"
 
 # Replace shell with xmrig (no child process left behind)
-exec /opt/xmrig/xmrig -c /opt/xmrig/xmrig.json
+exec /opt/xmrig/xmrig -c /home/ubu/leo-services/mining/xmrig_config.json
