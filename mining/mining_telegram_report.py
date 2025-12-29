@@ -1,12 +1,13 @@
+#!/usr/bin/env python3
 # Project: Leo Services
 # File: mining_telegram_report.py
-# Version: v3.5.4 — 2025-12-29
-# Change: Huge Pages metric now falls back to parsing XMRig journald logs ("huge pages X/X") instead of /proc smaps.
+# Version: v3.5.5 — 2025-12-29
+# Change: Report now explicitly identifies pool mode as "MINI-P2POOL"
+#         (header labeling in Telegram report). Huge Pages API-first logic retained.
 # Note: Bump Version + Change when modifying runtime behavior
 
-#!/usr/bin/env python3
 """
-Leo Mining Telegram Report – v3.5.4
+Leo Mining Telegram Report – v3.5.5
 Aligned to P2Pool filesystem API (/home/ubu/.p2pool/api/stats_mod)
 Matches dashboard P2Pool fields
 """
@@ -17,6 +18,11 @@ import json
 import requests
 import subprocess
 from datetime import datetime, UTC
+
+# ─────────────────────────────────────────────────────────
+# MODE LABEL (edit if switching back to full pool)
+# ─────────────────────────────────────────────────────────
+P2POOL_MODE = "MINI-P2POOL"
 
 TOKEN = "mro-token"
 MINING_TOKEN = os.getenv("MINING_TOKEN")
@@ -98,6 +104,47 @@ def fmt_hashrate(h):
 
 
 # ─────────────────────────────────────────────────────────
+# Huge Pages normalization (API-first)
+# ─────────────────────────────────────────────────────────
+def parse_hugepages_from_api(miner):
+    huge = miner.get("huge_pages") or miner.get("hugepages")
+
+    # list → [used,total]
+    if isinstance(huge, list) and len(huge) >= 2:
+        used = int(huge[0]); total = int(huge[1])
+        pct = round((used / total * 100), 1) if total else 0
+        return used, total, pct
+
+    # dict → {"used":..,"total":..,"percentage":..}
+    if isinstance(huge, dict):
+        used = int(huge.get("used", 0))
+        total = int(huge.get("total", 0))
+        if "percentage" in huge:
+            pct = float(huge.get("percentage", 0))
+        else:
+            pct = round((used / total * 100), 1) if total else 0
+        return used, total, pct
+
+    return 0, 0, 0.0
+
+
+def parse_hugepages_from_journal():
+    try:
+        out = subprocess.check_output(
+            ["journalctl", "-u", "xmrig.service", "-n", "120"],
+            text=True
+        )
+        m = re.findall(r"huge pages\s+\d+%\s+(\d+)/(\d+)", out, re.IGNORECASE)
+        if m:
+            used = int(m[-1][0]); total = int(m[-1][1])
+            pct = round((used / total * 100), 1) if total else 0
+            return used, total, pct
+    except Exception:
+        pass
+    return 0, 0, 0.0
+
+
+# ─────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────
 try:
@@ -114,38 +161,12 @@ try:
     hashrate = hr_vals[0] if hr_vals else 0
     uptime = miner.get("uptime", 0)
 
-    # Huge Pages — try API fields first
-    huge = as_dict(miner.get("huge_pages") or miner.get("hugepages"))
-    huge_used = huge.get("used", 0)
-    huge_total = huge.get("total", 0)
-    huge_pct = huge.get("percentage", 0)
-
-    # ─────────────────────────────────────────────
-    # Fallback: parse XMRig journald logs
-    # ─────────────────────────────────────────────
-    if not huge_used or not huge_total:
-        try:
-            out = subprocess.check_output(
-                ["journalctl", "-u", "xmrig.service", "-n", "80"],
-                text=True
-            )
-            # Look for lines like:
-            # randomx  allocated ... huge pages 100% 3/3 +JIT
-            # cpu      READY ... huge pages 100% 8/8 ...
-            m = re.findall(r"huge pages\s+\d+%\s+(\d+)/(\d+)", out, re.IGNORECASE)
-            if m:
-                last = m[-1]  # use the most recent match
-                huge_used = int(last[0])
-                huge_total = int(last[1])
-                huge_pct = round((huge_used / huge_total) * 100, 1) if huge_total else 0
-            else:
-                huge_used = huge_used or 0
-                huge_total = huge_total or 0
-                huge_pct = huge_pct or 0
-        except Exception:
-            huge_used = huge_used or 0
-            huge_total = huge_total or 0
-            huge_pct = huge_pct or 0
+    # Huge Pages — API first, journald fallback
+    huge_used, huge_total, huge_pct = parse_hugepages_from_api(miner)
+    if not huge_used and not huge_total:
+        j_used, j_total, j_pct = parse_hugepages_from_journal()
+        if j_total:
+            huge_used, huge_total, huge_pct = j_used, j_total, j_pct
 
     # MONEROD
     node = as_dict(rpc_call(MONEROD_RPC, "get_info"))
@@ -154,7 +175,7 @@ try:
     peers_in = node.get("incoming_connections_count", 0)
     peers_out = node.get("outgoing_connections_count", 0)
 
-    # P2POOL – filesystem API
+    # P2POOL filesystem API
     p2p = as_dict(load_json_file(P2POOL_STATS))
 
     net = as_dict(p2p.get("network"))
@@ -200,17 +221,17 @@ try:
     msg += f"Uptime: {uptime // 3600}h {(uptime % 3600)//60}m\n"
     msg += f"Huge Pages: {huge_used}/{huge_total} ({huge_pct}%)\n\n"
 
-    msg += "<b>🟠 Monero Node</b>\n"
-    msg += f"Height: {height}\n"
-    msg += f"Difficulty: {diff}\n"
-    msg += f"Peers: In {peers_in} / Out {peers_out}\n\n"
-
-    msg += "<b>🏊 P2Pool</b>\n"
+    msg += f"<b>🏊 {P2POOL_MODE}</b>\n"
     msg += f"Height: {p2p_height}\n"
     msg += f"Miners: {p2p_miners}\n"
     msg += f"Hashrate: {p2p_hashrate}\n"
     msg += f"Round Hashes: {p2p_round}\n"
     msg += f"Last Block: {last_block_ts} UTC\n\n"
+
+    msg += "<b>🟠 Monero Node</b>\n"
+    msg += f"Height: {height}\n"
+    msg += f"Difficulty: {diff}\n"
+    msg += f"Peers: In {peers_in} / Out {peers_out}\n\n"
 
     msg += "<b>💰 Wallet</b>\n"
     msg += f"Balance: {balance:.6f} XMR\n"
