@@ -1,0 +1,2 @@
+site,model_query,title,year,price_usd,total_time,engine_smoh,location,url,bucket,avionics_hits
+Trade-A-Plane,Cessna 172K,"$50,000 to $99,999 (5) $100,000 to $249,999 (4) $250,000 to $499,999 (1) Choose a Price Range...",,50000,,,,https://www.trade-a-plane.com/filtered/search?make=CESSNA&model=172&price-min=50000.00&price-max=99999.99&s-type=aircraft,vfr_basic,
