@@ -3,15 +3,13 @@
 """
 # Project: Leo Services
 # File: leo
-# Version: v1.9.15 — 2025-12-31
-# Change: Aircraft subsystem migrated to ~/leo-services/aircraft with local .venv
+# Version: v1.9.16 — 2025-12-31
+# Change: Fixed aircraft venv path to use "venv" folder (no dot) to match actual directory created
 # Note: tools/ no longer required — aircraft runs self-contained
-
 Leo System Command – leo
 ================================================
 Primary operator interface for Leo Services
 """
-
 import sys
 import subprocess
 from datetime import datetime
@@ -27,7 +25,7 @@ LEO_SRC = LEO_BASE / "leo" / "bin"
 
 # Aircraft subsystem (self-contained)
 AIRCRAFT_DIR = LEO_BASE / "aircraft"
-AIRCRAFT_VENV = AIRCRAFT_DIR / ".venv" / "bin" / "python"
+AIRCRAFT_VENV = AIRCRAFT_DIR / "venv" / "bin" / "python"          # ← Changed from ".venv" to "venv"
 AIRCRAFT_SCAN = AIRCRAFT_DIR / "aircraft_price_scan.py"
 
 # MES paths
@@ -51,9 +49,9 @@ def run(cmd: str, capture=False):
     else:
         subprocess.run(cmd, shell=True, check=True)
 
-def red(text: str):   print(f"\033[91m{text}\033[0m")
+def red(text: str): print(f"\033[91m{text}\033[0m")
 def green(text: str): print(f"\033[92m{text}\033[0m")
-def yellow(text: str):print(f"\033[93m{text}\033[0m")
+def yellow(text: str): print(f"\033[93m{text}\033[0m")
 
 def header():
     print("\n=== LEO SYSTEM ===")
@@ -78,8 +76,8 @@ def open_editor(path: Path):
 def confirm(prompt: str) -> bool:
     while True:
         r = input(f"{prompt} (y/n): ").lower().strip()
-        if r in ("y","yes"): return True
-        if r in ("n","no"):  return False
+        if r in ("y", "yes"): return True
+        if r in ("n", "no"): return False
         print("Please answer y or n.")
 
 # ============================================================
@@ -90,28 +88,24 @@ def show_git_status():
     if not (repo_path / ".git").exists():
         yellow("⚠ No git repo found at ~/leo-services")
         return
-
     success, output = run(f"git -C {repo_path} status --short --branch", capture=True)
     if not success:
         red("✖ Git command failed")
         return
-
     lines = output.strip().split("\n")
     branch_line = lines[0]
     changes = lines[1:] if len(lines) > 1 else []
-
     print(f"\n📂 Repo: {repo_path}")
     print(f"🌿 Branch: {branch_line}")
-
     if not changes:
         green("✔ Repo clean – all synced with GitHub")
     else:
         yellow("⚠ Local changes detected:")
         for line in changes[:10]:
-            print(f"   {line}")
+            print(f" {line}")
         if len(changes) > 10:
-            print("   ... (more changes)")
-        print("\n   Ready to commit & push when you're set 🚀")
+            print(" ... (more changes)")
+        print("\n Ready to commit & push when you're set 🚀")
 
 def show_quick_ref():
     print("""
@@ -137,7 +131,7 @@ def ops_menu():
         elif choice == "2":
             show_quick_ref()
             input("\nPress ENTER to return...")
-        elif choice in ("3","q","x","exit"):
+        elif choice in ("3", "q", "x", "exit"):
             return
         else:
             print("Invalid selection.\n")
@@ -147,33 +141,28 @@ def ops_menu():
 # ============================================================
 def aircraft():
     header()
-
     if not AIRCRAFT_SCAN.exists():
         red("✖ aircraft_price_scan.py not found:")
-        print(f"  {AIRCRAFT_SCAN}")
+        print(f" {AIRCRAFT_SCAN}")
         return
-
     if not AIRCRAFT_VENV.exists():
         red("✖ Aircraft venv not found:")
-        print(f"  {AIRCRAFT_VENV}")
-        print("  Create it with:")
-        print("    cd ~/leo-services/aircraft && python3 -m venv .venv")
-        print("    .venv/bin/pip install requests beautifulsoup4")
+        print(f" {AIRCRAFT_VENV}")
+        print(" Create it with:")
+        print(" cd ~/leo-services/aircraft && python3 -m venv venv")
+        print(" source venv/bin/activate")
+        print(" pip install requests beautifulsoup4 selenium webdriver-manager")
         return
-
     if len(sys.argv) < 3 or sys.argv[2] != "price":
         yellow("Aircraft pricing usage:\n")
-        print('  leo aircraft price "Cessna 172K"')
-        print('  leo aircraft price "Piper Cherokee 140" --save\n')
+        print(' leo aircraft price "Cessna 172K"')
+        print(' leo aircraft price "Piper Cherokee 140" --save\n')
         return
-
     if len(sys.argv) < 4:
         red("✖ Missing model query string")
         return
-
     args = " ".join(sys.argv[3:])
     cmd = f'"{AIRCRAFT_VENV}" "{AIRCRAFT_SCAN}" {args}'
-
     yellow("Running aircraft price scan...\n")
     run(cmd)
 
@@ -187,7 +176,6 @@ def deploy_code():
         "Deploying latest MES code + restarting "
         + ("DEMO services only..." if demo_only else "ALL services...")
     )
-
     try:
         run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
         run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
@@ -196,13 +184,11 @@ def deploy_code():
     except subprocess.CalledProcessError:
         red("✖ Copy failed – aborting")
         sys.exit(1)
-
     all_svcs = [
-        "mes_scalp_demo.service","mes_scalp_live.service",
-        "mes_swing_demo.service","mes_swing_live.service",
+        "mes_scalp_demo.service", "mes_scalp_live.service",
+        "mes_swing_demo.service", "mes_swing_live.service",
     ]
     svcs = [s for s in all_svcs if "demo" in s] if demo_only else all_svcs
-
     print("\nRestarting services...")
     for svc in svcs:
         success, output = run(f"sudo systemctl restart {svc}", capture=True)
@@ -210,8 +196,8 @@ def deploy_code():
             green(f" ✔ {svc}")
         else:
             red(f" ✖ {svc}")
-            if output.strip():
-                print(" →", output.strip())
+        if output.strip():
+            print(" →", output.strip())
 
 # ============================================================
 # Usage
@@ -219,14 +205,14 @@ def deploy_code():
 def usage():
     header()
     print("Daily commands:\n")
-    print(" leo status       System health overview")
-    print(" leo edit FILE    Edit operator tools")
-    print(" leo deploy code  Deploy MES + restart services")
-    print(" leo mes          MES operator wrapper")
-    print(" leo ops          Operations submenu")
-    print(" leo aircraft     Aircraft pricing tools")
-    print(" leo update       System package updates")
-    print(" leo reboot       Reboot system\n")
+    print(" leo status System health overview")
+    print(" leo edit FILE Edit operator tools")
+    print(" leo deploy code Deploy MES + restart services")
+    print(" leo mes MES operator wrapper")
+    print(" leo ops Operations submenu")
+    print(" leo aircraft Aircraft pricing tools")
+    print(" leo update System package updates")
+    print(" leo reboot Reboot system\n")
     sys.exit(0)
 
 # ============================================================
@@ -253,7 +239,6 @@ def edit():
     if target not in EDITABLE_FILES:
         red(f"Unknown target: {target}")
         return
-
     path = EDITABLE_FILES[target]
     print(f"Opening {path} ...")
     open_editor(path)
@@ -284,18 +269,17 @@ def reboot():
 # Entrypoint
 # ============================================================
 if __name__ == "__main__":
-    if len(sys.argv) == 1 or sys.argv[1] in ("help","-h","--help"):
+    if len(sys.argv) == 1 or sys.argv[1] in ("help", "-h", "--help"):
         usage()
-
     cmd = sys.argv[1].lower()
-    if   cmd == "status":  status()
-    elif cmd == "edit":    edit()
-    elif cmd == "deploy":  deploy()
-    elif cmd == "mes":     mes()
-    elif cmd == "ops":     ops_menu()
-    elif cmd == "aircraft":aircraft()
-    elif cmd == "update":  update()
-    elif cmd == "reboot":  reboot()
+    if cmd == "status": status()
+    elif cmd == "edit": edit()
+    elif cmd == "deploy": deploy()
+    elif cmd == "mes": mes()
+    elif cmd == "ops": ops_menu()
+    elif cmd == "aircraft": aircraft()
+    elif cmd == "update": update()
+    elif cmd == "reboot": reboot()
     else:
         red(f"Unknown command: {cmd}")
         usage()

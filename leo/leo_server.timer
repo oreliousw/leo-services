@@ -1,8 +1,8 @@
 [Unit]
-Description=Run Leo Server Telegram Report hourly
+Description=Run Leo Server Telegram Report 6 hours
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*-*-* 0/6:00:00
 Persistent=true
 
 [Install]
