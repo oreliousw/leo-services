@@ -1,58 +1,48 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_trader.py
-# Version: v2.1 — Awareness & Reporting Upgrade (2026)
+# Version: v2.2 — Awareness & Context Signals (2026)
 #
 # SYSTEM DESIGN PHILOSOPHY — Kraken MES (Core + Trading Slice)
 #
 # Mission:
-#   This system is designed to gradually increase total BTC over
-#   time by rotating a small trading slice through disciplined
-#   swing cycles, while the majority of holdings remain untouched
-#   as a long-term core position.
+#   Gradually increase total BTC over time by rotating a limited
+#   trading slice through disciplined swing cycles, while the
+#   majority of holdings remain untouched as a long-term core.
 #
 # Core Principles:
-#   • TRUST THE RULES — execution is automated and deterministic
-#   • NO discretionary overrides or human-driven intervention hooks
-#   • NO panic logic, fear prompts, or "review / override" events
-#   • The system remains calm, quiet, and disciplined by design
+#   • TRUST THE RULES — execution is deterministic, not emotional
+#   • NO discretionary overrides or manual “review / exit” prompts
+#   • NO stop-logic, panic-logic, or safety overrides
+#   • Calm, quiet, disciplined — awareness ≠ intervention
 #
 # Risk Model:
-#   • Core BTC is never traded or exposed to rotation risk
-#   • Only a limited slice participates in swing accumulation
-#   • Objective = grow BTC quantity over time, not chase price action
+#   • Core BTC is never traded
+#   • Only a defined slice participates in rotation
+#   • Objective = accumulate BTC quantity over time
 #
 # Behavioral Philosophy:
-#   • The system behaves like an autopilot — procedural and predictable
-#   • Alerts are minimal and only reflect meaningful cycle events
-#     (BUY / SELL / RESET)
-#   • Awareness reports provide context — NOT decision prompts
-#   • Results are evaluated over time — never mid-cycle
+#   • System behaves like an autopilot — procedural + consistent
+#   • Alerts reflect meaningful cycle events only
+#   • Awareness reporting is informational — not directive
 #
-# Guiding Intent:
-#   Confidence comes from consistency, patience, and discipline.
-#   Trust the code. Trust the rules. Let discipline do the work.
+# v2.2 Direction:
+#   • Adds near-trigger awareness alerts (one per cycle)
+#       - BUY pre-zone at −3% (trigger remains −4%)
+#       - SELL pre-zone at +4% (target remains +5%)
+#   • Adds context-block debugging on BUY + SELL signals
+#   • Maintains signals-only mode — no order execution
 #
-# Version Direction (v2.1):
-#   • Daily 6:00 AM Portfolio Snapshot (Telegram)
-#   • BTC price + 24-hour % change
-#   • Kraken trading-slice valuation (BTC + USD)
-#   • Ledger core BTC reference estimation
-#   • Total portfolio valuation
-#   • Unrealized P/L vs prior day (USD + %)
-#   • Slice-Sanity Awareness line (informational only)
-#
-# Trading Logic Policy (unchanged by design):
-#   • Signals-only swing rotation engine
-#   • Trade Slice Concept: ~30% of BTC (exchange-local)
-#   • Buy trigger:  −4% pullback from swing-high
-#   • Sell trigger: +5% recovery from entry
-#   • State machine: idle → hold → reset
-#   • NO stop-logic, NO timeout logic, NO override triggers
+# Trading Rules (fixed):
+#   • BUY Trigger:  −4% from swing-high
+#   • SELL Target:  +5% from entry
+#   • Near-Zone Alerts:
+#       - BUY awareness:  −3%
+#       - SELL awareness: +4%
+#   • State Machine: idle → hold → reset
 #
 # Execution Mode:
-#   • No trades are executed — alerts only
-#   • System operates quietly and consistently
+#   • Signals-only — NO trades are placed
 #
 # Author: Orelious — Kraken MES Crypto Line (2026)
 # ============================================================
@@ -70,7 +60,7 @@ from datetime import datetime
 
 
 # ------------------------------------------------------------
-# Environment / Secrets
+# Environment
 # ------------------------------------------------------------
 API_KEY_PUBLIC  = os.getenv("KRAKEN_API_KEY")
 API_KEY_PRIVATE = os.getenv("KRAKEN_PRV_KEY")
@@ -82,24 +72,17 @@ if not all([API_KEY_PUBLIC, API_KEY_PRIVATE, TG_TOKEN, TG_CHAT]):
     sys.exit(1)
 
 
-# ------------------------------------------------------------
-# User Config
-# ------------------------------------------------------------
 CORE_BTC_REFERENCE = float(os.getenv("CORE_BTC_REFERENCE", "0.01084"))
-
 REPORT_HOUR = 6
 REPORT_MIN  = 0
 
 
-# ------------------------------------------------------------
-# Files
-# ------------------------------------------------------------
 STATE_FILE = Path("kraken_state.json")
 SNAP_FILE  = Path("portfolio_snapshot.json")
 
 
 # ------------------------------------------------------------
-# Telegram Messaging
+# Telegram
 # ------------------------------------------------------------
 def tg_send(msg: str):
     try:
@@ -115,7 +98,7 @@ def tg_send(msg: str):
 
 
 # ------------------------------------------------------------
-# Kraken API Helpers
+# Kraken API
 # ------------------------------------------------------------
 API_BASE = "https://api.kraken.com"
 
@@ -140,13 +123,13 @@ def k_private(path: str, params: str):
     req = urllib.request.Request(f"{API_BASE}{path}", post.encode())
     req.add_header("API-Key", API_KEY_PUBLIC)
     req.add_header("API-Sign", signature)
-    req.add_header("User-Agent", "Kraken-MES-v2.1")
+    req.add_header("User-Agent", "Kraken-MES-v2.2")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
 
 
 # ------------------------------------------------------------
-# Utilities
+# Helpers
 # ------------------------------------------------------------
 def pct(a, b):
     return ((b - a) / a) * 100.0 if a else 0.0
@@ -157,30 +140,28 @@ def btc_price_and_change():
     key = list(data["result"].keys())[0]
     last = float(data["result"][key]["c"][0])
     open_24h = float(data["result"][key]["o"])
-    change = pct(open_24h, last)
-    return last, change
+    return last, pct(open_24h, last)
 
 
 def get_kraken_balances():
     res = k_private("/0/private/Balance", "")
     if res.get("error"):
         raise RuntimeError(res["error"])
-    btc = float(res["result"].get("XXBT", 0.0))
-    usd = float(res["result"].get("ZUSD", 0.0))
-    return btc, usd
+    return (
+        float(res["result"].get("XXBT", 0.0)),
+        float(res["result"].get("ZUSD", 0.0)),
+    )
 
 
 # ------------------------------------------------------------
-# Daily Portfolio Snapshot (includes Slice-Sanity Awareness)
+# Snapshot Report (unchanged logic)
 # ------------------------------------------------------------
 def load_snapshot():
-    if SNAP_FILE.exists():
-        return json.loads(SNAP_FILE.read_text())
-    return None
+    return json.loads(SNAP_FILE.read_text()) if SNAP_FILE.exists() else None
 
 
-def save_snapshot(value):
-    SNAP_FILE.write_text(json.dumps({"last_value": value}, indent=2))
+def save_snapshot(v):
+    SNAP_FILE.write_text(json.dumps({"last_value": v}, indent=2))
 
 
 def run_daily_report():
@@ -192,7 +173,6 @@ def run_daily_report():
     total_value = slice_value + core_value
     total_btc   = btc_slice + CORE_BTC_REFERENCE
 
-    # ---- Slice-Sanity Awareness (informational only) ----
     SLICE_MIN_THRESHOLD = 0.001
     slice_note = ""
     if btc_slice < SLICE_MIN_THRESHOLD:
@@ -200,14 +180,13 @@ def run_daily_report():
 
     prev = load_snapshot()
     if prev:
-        prev_val = prev["last_value"]
-        pl_usd = total_value - prev_val
-        pl_pct = pct(prev_val, total_value)
+        pl_usd = total_value - prev["last_value"]
+        pl_pct = pct(prev["last_value"], total_value)
         pl_line = f"Since Yesterday:\n• Unrealized P/L: {pl_usd:+.2f} USD ({pl_pct:+.2f}%)"
     else:
         pl_line = "Since Yesterday:\n• Unrealized P/L: — (first snapshot)"
 
-    msg = (
+    tg_send(
         "📊 Daily Crypto Overview — 6:00 AM\n\n"
         f"BTC Price: ${price:,.2f}\n"
         f"24h Change: {chg24:+.2f}%\n\n"
@@ -223,41 +202,42 @@ def run_daily_report():
         f"• BTC: {total_btc:.8f}\n"
         f"• Est Value: ${total_value:,.2f}\n\n"
         f"{pl_line}\n\n"
-        "Mode: Signals-Only — v2.1"
+        "Mode: Signals-Only — v2.2"
     )
 
-    tg_send(msg)
     save_snapshot(total_value)
 
 
 def maybe_run_daily_report():
-    now = datetime.now()
-    if now.hour == REPORT_HOUR and now.minute == REPORT_MIN:
+    n = datetime.now()
+    if n.hour == REPORT_HOUR and n.minute == REPORT_MIN:
         run_daily_report()
 
 
 # ------------------------------------------------------------
-# Swing Rotation Engine (unchanged — rule-driven only)
+# Swing Engine — v2.2 Enhancements
 # ------------------------------------------------------------
 DEFAULT_STATE = {
     "mode": "idle",
     "entry_price": None,
-    "last_swing_high": None
+    "last_swing_high": None,
+    "buy_approach_sent": False,
+    "sell_approach_sent": False,
 }
 
 
 def load_state():
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return DEFAULT_STATE.copy()
+    return json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else DEFAULT_STATE.copy()
 
 
 def save_state(s):
     STATE_FILE.write_text(json.dumps(s, indent=2))
 
 
-BUY_PULLBACK_PCT = -4.0
-SELL_TARGET_PCT  =  5.0
+BUY_PULLBACK = -4.0
+BUY_APPROACH = -3.0
+SELL_TARGET  =  5.0
+SELL_APPROACH = 4.0
 
 
 def get_price():
@@ -266,46 +246,89 @@ def get_price():
 
 
 def engine_tick():
-    state = load_state()
-    price = get_price()
+    s = load_state()
+    p = get_price()
 
-    if state["last_swing_high"] is None:
-        state["last_swing_high"] = price
+    if s["last_swing_high"] is None:
+        s["last_swing_high"] = p
 
-    if price > state["last_swing_high"]:
-        state["last_swing_high"] = price
+    if p > s["last_swing_high"]:
+        s["last_swing_high"] = p
+        s["buy_approach_sent"] = False
 
-    pullback = pct(state["last_swing_high"], price)
+    pullback = pct(s["last_swing_high"], p)
 
-    if state["mode"] == "idle":
-        if pullback <= BUY_PULLBACK_PCT:
-            state["entry_price"] = price
-            state["mode"] = "hold"
+    # --- IDLE STATE ---
+    if s["mode"] == "idle":
+
+        if not s["buy_approach_sent"] and pullback <= BUY_APPROACH:
+            buy_trigger = s["last_swing_high"] * (1 + BUY_PULLBACK / 100)
+            tg_send(
+                "🟡 Approaching BUY Zone\n"
+                f"• Pullback: {pullback:.2f}%\n"
+                f"• Swing High: {s['last_swing_high']:.2f}\n"
+                f"• Current: {p:.2f}\n"
+                f"• Buy Trigger: {buy_trigger:.2f} (-4%)\n\n"
+                "Info Only — No Action"
+            )
+            s["buy_approach_sent"] = True
+
+        if pullback <= BUY_PULLBACK:
+            s["entry_price"] = p
+            s["mode"] = "hold"
+            s["sell_approach_sent"] = False
+            buy_trigger = s["last_swing_high"] * (1 + BUY_PULLBACK / 100)
             tg_send(
                 "🟢 BUY SIGNAL (Swing Rotation)\n"
-                f"Entry Price: {price}\n"
-                f"Pullback: {pullback:.2f}%\n"
-                "Trading Slice: 30%"
+                f"Entry Price: {p:.2f}\n"
+                f"Pullback: {pullback:.2f}%\n\n"
+                "Context:\n"
+                f"• Swing High: {s['last_swing_high']:.2f}\n"
+                f"• Buy Trigger: {buy_trigger:.2f} (-4%)\n"
+                f"• Current: {p:.2f}\n"
+                f"• Distance Past Trigger: {(pct(buy_trigger,p)):.2f}%\n\n"
+                "Engine: v2.2 (signals-only)"
             )
 
-    elif state["mode"] == "hold":
-        gain = pct(state["entry_price"], price)
-        if gain >= SELL_TARGET_PCT:
-            state["mode"] = "reset"
+    # --- HOLD STATE ---
+    elif s["mode"] == "hold":
+        gain = pct(s["entry_price"], p)
+        sell_target = s["entry_price"] * (1 + SELL_TARGET / 100)
+
+        if not s["sell_approach_sent"] and gain >= SELL_APPROACH:
+            tg_send(
+                "🟣 Approaching SELL Target\n"
+                f"• Gain: {gain:.2f}%\n"
+                f"• Entry: {s['entry_price']:.2f}\n"
+                f"• Current: {p:.2f}\n"
+                f"• Sell Target: {sell_target:.2f} (+5%)\n\n"
+                "Info Only — No Action"
+            )
+            s["sell_approach_sent"] = True
+
+        if gain >= SELL_TARGET:
+            s["mode"] = "reset"
             tg_send(
                 "🔵 SELL SIGNAL (Target Hit)\n"
-                f"Entry: {state['entry_price']}\n"
-                f"Exit:  {price}\n"
-                f"Gain:  {gain:.2f}%\n"
-                "Cycle complete — waiting for next dip"
+                f"Entry: {s['entry_price']:.2f}\n"
+                f"Exit:  {p:.2f}\n"
+                f"Gain:  {gain:.2f}%\n\n"
+                "Context:\n"
+                f"• Target Price: {sell_target:.2f} (+5%)\n"
+                f"• Current: {p:.2f}\n"
+                f"• Distance Above Target: {(pct(sell_target,p)):.2f}%\n\n"
+                "Cycle Complete — waiting for next dip\n"
+                "Engine: v2.2 (signals-only)"
             )
 
-    elif state["mode"] == "reset":
-        if pullback <= BUY_PULLBACK_PCT:
-            state["mode"] = "idle"
+    # --- RESET STATE ---
+    elif s["mode"] == "reset":
+        if pullback <= BUY_PULLBACK:
+            s["mode"] = "idle"
+            s["buy_approach_sent"] = False
             tg_send("⚙️ Reset complete — new cycle armed")
 
-    save_state(state)
+    save_state(s)
 
 
 # ------------------------------------------------------------
@@ -314,9 +337,9 @@ def engine_tick():
 if __name__ == "__main__":
     try:
         maybe_run_daily_report()
-        print("Kraken Trader v2.1 tick OK")
+        print("Kraken Trader v2.2 tick OK")
         engine_tick()
     except Exception as e:
-        tg_send(f"❌ Kraken v2.1 runtime error:\n{e}")
+        tg_send(f"❌ Kraken v2.2 runtime error:\n{e}")
         print(f"[FATAL] {e}")
         sys.exit(1)
