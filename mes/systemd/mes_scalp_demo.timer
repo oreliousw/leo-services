@@ -1,9 +1,40 @@
+# ============================================================
+# MES SCALP TIMER — DEMO
+# Version: v3.5.95
+# Purpose:
+#   Runs the MES Pro-Retest Scalp trader during
+#   active market days and session-qualified hours.
+#
+# Notes:
+#   • Monday trading IS included
+#   • Weekends are not scheduled
+#   • Timer fires every 15 min during the U.S. session window
+#   • Service unit: mes_scalp_demo.service
+#
+# Schedule (UTC):
+#   Sun 22:00  – session warm-start
+#   Mon–Fri 13:00–21:45  (every 15 min)
+#   Fri 22:00 – final cycle cutoff
+# ============================================================
+
 [Unit]
-Description=MES Scalp Trader DEMO timer (every 30 min)
+Description=MES Scalp Trader DEMO — market days only
 Requires=mes_scalp_demo.service
 
 [Timer]
-OnCalendar=*:00,30
+# Sunday 14:00 PST (22:00 UTC) → Friday 14:00 PST
+# Every 15 min during those hours
+OnCalendar=Sun *-*-* 22:00:00
+OnCalendar=Mon-Fri *-*-* 13:00:00/15min
+OnCalendar=Mon-Fri *-*-* 14:00:00/15min
+OnCalendar=Mon-Fri *-*-* 15:00:00/15min
+OnCalendar=Mon-Fri *-*-* 16:00:00/15min
+OnCalendar=Mon-Fri *-*-* 17:00:00/15min
+OnCalendar=Mon-Fri *-*-* 18:00:00/15min
+OnCalendar=Mon-Fri *-*-* 19:00:00/15min
+OnCalendar=Mon-Fri *-*-* 20:00:00/15min
+OnCalendar=Mon-Fri *-*-* 21:00:00/15min
+OnCalendar=Fri *-*-* 22:00:00
 AccuracySec=1s
 Persistent=true
 Unit=mes_scalp_demo.service
