@@ -3,17 +3,23 @@
 """
 # Project: Leo Services
 # File: leo
-# Version: v1.9.18 — 2026-01-04
+# Version: v1.9.19 — 2026-01-04
 #
 # Change:
 #   • Hardened editor launcher to prevent crashes when `code --wait`
 #     is unsupported (common on CLI / server builds of VS Code).
+#   • Restored full MES deployment alignment:
+#     - Copies both Python runtime files (.py) AND systemd unit files (.service)
+#     - Runs systemctl daemon-reload after copy
+#     - Restarts all MES services by default
+#     - With -d flag: only restarts demo services (live files updated but not restarted)
+#   • Goal: eliminate config drift, repo = single source of truth,
+#     consistent with Kraken deploy model, prevents outdated unit issues
+#
 #   • Behavior:
 #         - Try `code --wait`
 #         - If unsupported → fallback to vim, then nano
 #         - Never crash operator workflow
-#
-#   • Kraken deploy integration retained (deploy_kraken.sh)
 #
 Leo System Command – leo
 ================================================
@@ -24,6 +30,7 @@ import subprocess
 from datetime import datetime
 from shutil import which
 from pathlib import Path
+import glob
 
 # ============================================================
 # Paths
@@ -37,11 +44,9 @@ AIRCRAFT_DIR = LEO_BASE / "aircraft"
 AIRCRAFT_VENV = AIRCRAFT_DIR / "venv" / "bin" / "python"
 AIRCRAFT_SCAN = AIRCRAFT_DIR / "aircraft_price_scan.py"
 
-# MES paths
-MES_SCALP_SRC = LEO_BASE / "mes" / "mes_scalp.py"
-MES_SWING_SRC = LEO_BASE / "mes" / "mes_swing.py"
-MES_SCALP_DEST = Path("/opt/mes/mes_scalp.py")
-MES_SWING_DEST = Path("/opt/mes/mes_swing.py")
+# MES paths — source (repo) and destination (live)
+MES_SRC_DIR = LEO_BASE / "mes"
+MES_BIN_DEST = Path("/opt/mes")
 
 # Kraken subsystem
 KRAKEN_DIR = LEO_BASE / "kraken"
@@ -55,12 +60,12 @@ EDITABLE_FILES = {
 # ============================================================
 # Helpers
 # ============================================================
-def run(cmd: str, capture=False):
+def run(cmd: str, capture=False, check=True):
     if capture:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         return result.returncode == 0, result.stdout + result.stderr
     else:
-        subprocess.run(cmd, shell=True, check=True)
+        subprocess.run(cmd, shell=True, check=check)
 
 def red(text: str): print(f"\033[91m{text}\033[0m")
 def green(text: str): print(f"\033[92m{text}\033[0m")
@@ -74,26 +79,23 @@ def has_cmd(cmd: str) -> bool:
     return which(cmd) is not None
 
 # ============================================================
-# SAFE EDITOR LAUNCHER (patched)
+# SAFE EDITOR LAUNCHER
 # ============================================================
 def open_editor(path: Path):
     if not path.exists():
         red(f"File not found: {path}")
         return
 
-    # Try VS Code only if --wait is supported
     if has_cmd("code"):
         ok, _ = run(f"code --wait {path}", capture=True)
         if ok:
             return
         yellow("VS Code detected, but `--wait` not supported — falling back...")
 
-    # Try vim
     if has_cmd("vim"):
         run(f"vim {path}")
         return
 
-    # Try nano
     if has_cmd("nano"):
         run(f"nano {path}")
         return
@@ -194,35 +196,51 @@ def aircraft():
     run(cmd)
 
 # ============================================================
-# MES Deploy
+# MES Deploy — Updated for systemd subfolder
 # ============================================================
 def deploy_mes():
     header()
     demo_only = "-d" in sys.argv
-    yellow(
-        "Deploying latest MES code + restarting "
-        + ("DEMO services only..." if demo_only else "ALL services...")
-    )
-    try:
-        run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
-        run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
-        run(f"sudo chmod 644 {MES_SCALP_DEST} {MES_SWING_DEST}")
-        green("✔ MES files copied successfully")
-    except subprocess.CalledProcessError:
-        red("✖ Copy failed – aborting")
-        sys.exit(1)
+    scope = "demo services only (live files updated but not restarted)" if demo_only else "ALL services"
+    yellow(f"Deploying latest MES code → {scope}...")  # updated message: no "+ units"
 
+    # 1. Copy Python runtime files only (units are now symlinked)
+    for src in [MES_SRC_DIR / "mes_scalp.py", MES_SRC_DIR / "mes_swing.py"]:
+        if not src.exists():
+            red(f"Missing source file: {src}")
+            return
+        dest = MES_BIN_DEST / src.name
+        run(f"sudo cp -f {src} {dest}")
+        run(f"sudo chmod 644 {dest}")
+        green(f"✔ Copied {src.name} → {dest}")
+
+    # 2. Unit files are now symlinked - no copy needed
+
+    # 3. Reload systemd daemon
+    print("\nReloading systemd daemon...")
+    success, output = run("sudo systemctl daemon-reload", capture=True)
+    if success:
+        green("✔ daemon-reload complete")
+    else:
+        red("✖ daemon-reload failed")
+        print(output)
+        return
+
+    # 4. Restart services based on scope
     all_svcs = [
-        "mes_scalp_demo.service","mes_scalp_live.service",
-        "mes_swing_demo.service","mes_swing_live.service",
+        "mes_scalp_demo.service", "mes_scalp_live.service",
+        "mes_swing_demo.service", "mes_swing_live.service",
     ]
     svcs = [s for s in all_svcs if "demo" in s] if demo_only else all_svcs
-    print("\nRestarting MES services...")
+    print(f"\nRestarting {scope.split(' (')[0]}...")
     for svc in svcs:
         success, output = run(f"sudo systemctl restart {svc}", capture=True)
-        if success: green(f" ✔ {svc}")
-        else: red(f" ✖ {svc}")
-        if output.strip(): print(" →", output.strip())
+        if success:
+            green(f" ✔ {svc}")
+        else:
+            red(f" ✖ {svc}")
+            if output.strip():
+                print(f" → {output.strip()}")
 
 # ============================================================
 # Kraken Deploy
@@ -234,7 +252,6 @@ def deploy_kraken():
     if not KRAKEN_DEPLOY.exists():
         red("✖ Kraken deploy script not found:")
         print(f" {KRAKEN_DEPLOY}")
-        print("\nExpected path: ~/leo-services/kraken/deploy_kraken.sh")
         return
 
     try:
@@ -244,14 +261,15 @@ def deploy_kraken():
         red("✖ Kraken deploy failed")
 
 # ============================================================
-# Usage
+# Usage / Commands
 # ============================================================
 def usage():
     header()
     print("Daily commands:\n")
     print(" leo status          System health overview")
     print(" leo edit FILE       Edit operator tools")
-    print(" leo deploy          Deploy MES")
+    print(" leo deploy          Deploy MES (full units + restart all)")
+    print(" leo deploy -d       Deploy MES (demo services only)")
     print(" leo deploy kraken   Deploy Kraken stack")
     print(" leo mes             MES operator wrapper")
     print(" leo ops             Operations submenu")
@@ -260,9 +278,6 @@ def usage():
     print(" leo reboot          Reboot system\n")
     sys.exit(0)
 
-# ============================================================
-# Commands
-# ============================================================
 def status():
     header()
     run("uptime"); print("")
@@ -298,7 +313,7 @@ def mes():
 def update():
     header()
     run("sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y")
-    green("\nアップデート完了 😺")
+    green("\nUpdate complete 😺")
 
 def reboot():
     header()

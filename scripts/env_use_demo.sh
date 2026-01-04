@@ -1,0 +1,7 @@
+#!/bin/bash
+
+export OANDA_API_TOKEN="$OANDA_API_KEY_DEMO"
+export OANDA_ACCOUNT_ID="$OANDA_ACCOUNT_ID_DEMO"
+export OANDA_API_URL="$OANDA_API_URL_DEMO"
+
+exec "$@"
