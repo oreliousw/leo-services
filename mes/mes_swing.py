@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MES Swing v3.4.11 – Higher-Timeframe Swing Trader
+MES Swing v3.4.12 – Higher-Timeframe Swing Trader
 Enhancement #1: Deterministic 1:2 R:R using 3.0 × ATR TP (random TP removed)
 Enhancement #2: Transport-layer reliability – single requests.Session with urllib3 retry + exponential backoff
 Enhancement #3 (v3.4.11): Matching MES Scalp v3.5.1 fixes
@@ -10,6 +10,10 @@ Enhancement #3 (v3.4.11): Matching MES Scalp v3.5.1 fixes
   • Enforce min 3-pip SL/TP distance (widens only)
   • Round SL/TP to displayPrecision
   • No changes to swing logic, risk, or position caps
+Enhancement #4 (v3.4.12): Professionalization pass
+  • Explicit eligibility + market-conditions gate (no new filters yet; just structured)
+  • Shared risk + margin helper layer (behavior-preserving refactor)
+  • Structured JSONL decision traces for both taken and skipped trades
 Location: /opt/mes/mes_swing.py
 """
 import argparse
@@ -23,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
 import pandas as pd
 import requests
 import numpy as np
@@ -58,6 +63,8 @@ LOG_DIR = Path("/opt/mes/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "mes_swing.log"
 DIAG_PATH = LOG_DIR / "latest_swing_diag.json"
+DECISIONS_LOG_PATH = LOG_DIR / "swing_decisions.jsonl"
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -68,11 +75,17 @@ logging.basicConfig(
 # CONFIG & AUTH
 # ============================================================
 CONFIG_PATH = Path("/opt/mes/config.json")
+
+
 def load_config() -> Dict[str, Any]:
     if CONFIG_PATH.exists():
-        try: return json.loads(CONFIG_PATH.read_text())
-        except Exception as e: logging.warning(f"Config read failed: {e}")
+        try:
+            return json.loads(CONFIG_PATH.read_text())
+        except Exception as e:
+            logging.warning(f"Config read failed: {e}")
     return {}
+
+
 config = load_config()
 
 OANDA_API_TOKEN = os.getenv("OANDA_API_TOKEN", config.get("OANDA_API_KEY", ""))
@@ -121,7 +134,7 @@ if IS_LIVE and not LIVE_ALLOWED:
     sys.exit(1)
 
 TAG = "MES_SWING_LIVE_v3" if IS_LIVE else "MES_SWING_DEMO_v3"
-VERSION = f"MES Swing v3.4.11 {MODE} [{TAG}]"
+VERSION = f"MES Swing v3.4.12 {MODE} [{TAG}]"
 
 RISK_PCT = float(os.getenv("SWING_RISK_PCT_LIVE", "0.0025")) if IS_LIVE else float(os.getenv("SWING_RISK_PCT_DEMO", "0.02"))
 MAX_MARGIN_FRAC = float(os.getenv("SWING_MAX_MARGIN_FRAC_LIVE", "0.10")) if IS_LIVE else float(os.getenv("SWING_MAX_MARGIN_FRAC_DEMO", "0.20"))
@@ -132,8 +145,14 @@ has_tg = bool(FOREX_TOKEN.strip()) and bool(TELEGRAM_ID.strip())
 logging.info(f"[SWING] Starting {VERSION} – risk {RISK_PCT:.1%} – margin cap {MAX_MARGIN_FRAC:.0%}")
 
 INSTRUMENTS = [
-    "EUR_USD", "GBP_USD", "AUD_USD", "NZD_USD",
-    "USD_CAD", "USD_CHF", "EUR_GBP", "USD_JPY",
+    "EUR_USD",
+    "GBP_USD",
+    "AUD_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "EUR_GBP",
+    "USD_JPY",
 ]
 
 # ============================================================
@@ -143,22 +162,29 @@ INSTRUMENTS = [
 def get_instrument_info_cached(instrument: str, _ts: int = int(time() // 600)) -> Tuple[float, int]:
     return get_instrument_info(instrument)
 
+
 def get_instrument_info(instrument: str) -> Tuple[float, int]:
-    r = session.get(f"{OANDA_REST_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/instruments", params={"instruments": instrument}, timeout=10)
+    r = session.get(
+        f"{OANDA_REST_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/instruments",
+        params={"instruments": instrument},
+        timeout=10,
+    )
     if r.status_code == 200:
         inst = r.json()["instruments"][0]
         loc = inst.get("pipLocation", -4)
         precision = inst.get("displayPrecision", 5)
-        return 10 ** loc, precision
+        return 10**loc, precision
     pip = 0.01 if instrument.endswith("_JPY") else 0.0001
     prec = 3 if instrument.endswith("_JPY") else 5
     return pip, prec
+
 
 # ============================================================
 # TELEGRAM & DIAGNOSTICS
 # ============================================================
 def tg(msg: str):
-    if not has_tg: return
+    if not has_tg:
+        return
     try:
         requests.post(
             f"https://api.telegram.org/bot{FOREX_TOKEN}/sendMessage",
@@ -168,10 +194,31 @@ def tg(msg: str):
     except Exception as e:
         logging.error(f"TG error: {e}")
 
+
 def save_diag(diag: dict):
+    """Preserve latest trade diagnostic (backward compatible)."""
     try:
         DIAG_PATH.write_text(json.dumps(diag, indent=2))
-    except: pass
+    except Exception:
+        pass
+
+
+def log_decision(decision: Dict[str, Any]) -> None:
+    """
+    Append a single-line JSON decision record (both TAKEN and SKIPPED)
+    to swing_decisions.jsonl for post-hoc analysis.
+    """
+    try:
+        decision = {
+            **decision,
+            "timestamp": decision.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+            "version": VERSION,
+        }
+        with DECISIONS_LOG_PATH.open("a") as f:
+            f.write(json.dumps(decision, separators=(",", ":")) + "\n")
+    except Exception as e:
+        logging.warning(f"Decision log write failed: {e}")
+
 
 # ============================================================
 # OANDA HELPERS
@@ -183,35 +230,47 @@ def oanda_get_candles(instrument: str, tf: str, count: int = 300) -> pd.DataFram
         timeout=15,
     )
     r.raise_for_status()
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for c in r.json().get("candles", []):
         if c.get("complete"):
             m = c["mid"]
-            rows.append({
-                "time": pd.to_datetime(c["time"]),
-                "open": float(m["o"]), "high": float(m["h"]),
-                "low": float(m["l"]), "close": float(m["c"]),
-                "volume": int(c.get("volume", 0)),
-            })
+            rows.append(
+                {
+                    "time": pd.to_datetime(c["time"]),
+                    "open": float(m["o"]),
+                    "high": float(m["h"]),
+                    "low": float(m["l"]),
+                    "close": float(m["c"]),
+                    "volume": int(c.get("volume", 0)),
+                }
+            )
     df = pd.DataFrame(rows).set_index("time")
-    if df.empty: raise ValueError("No complete candles")
+    if df.empty:
+        raise ValueError("No complete candles")
     return df
+
 
 def oanda_get_nav() -> float:
     r = session.get(f"{OANDA_REST_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/summary", timeout=10)
     r.raise_for_status()
     return float(r.json()["account"]["NAV"])
 
+
 def oanda_open_positions() -> Dict[str, float]:
     r = session.get(f"{OANDA_REST_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/openPositions", timeout=10)
     r.raise_for_status()
-    return {p["instrument"]: float(p["long"]["units"]) + float(p["short"]["units"])
-            for p in r.json().get("positions", [])}
+    return {
+        p["instrument"]: float(p["long"]["units"]) + float(p["short"]["units"])
+        for p in r.json().get("positions", [])
+    }
+
 
 # ============================================================
 # NEW: SL/TP Adjustment & Rounding
 # ============================================================
-def adjust_and_round_sl_tp(instrument: str, entry: float, sl: float, tp: float, direction: str) -> Tuple[float, float]:
+def adjust_and_round_sl_tp(
+    instrument: str, entry: float, sl: float, tp: float, direction: str
+) -> Tuple[float, float]:
     pip_size, precision = get_instrument_info_cached(instrument)
     min_dist = 3 * pip_size
     orig_sl, orig_tp = sl, tp
@@ -231,24 +290,72 @@ def adjust_and_round_sl_tp(instrument: str, entry: float, sl: float, tp: float, 
     tp = round(tp, precision)
 
     if sl != orig_sl or tp != orig_tp:
-        logging.info(f"[ADJUST] {instrument} SL {orig_sl:.{precision}f}→{sl:.{precision}f} | TP {orig_tp:.{precision}f}→{tp:.{precision}f}")
+        logging.info(
+            f"[ADJUST] {instrument} SL {orig_sl:.{precision}f}→{sl:.{precision}f} | "
+            f"TP {orig_tp:.{precision}f}→{tp:.{precision}f}"
+        )
 
     return sl, tp
+
 
 # ============================================================
 # INDICATORS
 # ============================================================
 def atr(df: pd.DataFrame, period: int = 14) -> float:
     high, low, close = df["high"], df["low"], df["close"]
-    tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
-    return tr.rolling(period).mean().iloc[-1]
+    tr = pd.concat(
+        [high - low, (high - close.shift()).abs(), (low - close.shift()).abs()],
+        axis=1,
+    ).max(axis=1)
+    return float(tr.rolling(period).mean().iloc[-1])
 
-def rsi(series: pd.Series, period: int = 14) -> float:
+
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
     loss = -delta.clip(upper=0).rolling(period).mean()
     rs = gain / (loss + 1e-9)
     return 100 - 100 / (1 + rs)
+
+
+# ============================================================
+# RISK & MARGIN HELPERS (behavior-preserving)
+# ============================================================
+def compute_units_from_risk(nav: float, risk_pct: float, pips_risk: float, pip_val: float) -> int:
+    """
+    Compute units from risk % and pip risk.
+    Mirrors original formula: units_raw = int((nav * RISK_PCT) / (pips_risk * pip_val))
+    """
+    if nav <= 0 or risk_pct <= 0 or pips_risk <= 0 or pip_val <= 0:
+        return 0
+    return int((nav * risk_pct) / (pips_risk * pip_val))
+
+
+def apply_margin_cap(
+    units_raw: int,
+    nav: float,
+    entry: float,
+    leverage: float,
+    margin_frac: float,
+) -> Tuple[int, bool]:
+    """
+    Apply margin cap while preserving original behavior:
+        est_margin = abs(units_raw) * entry / ASSUMED_LEVERAGE
+        margin_allowed = nav * MAX_MARGIN_FRAC
+        if est_margin > margin_allowed:
+            units_final = int(abs(margin_allowed * ASSUMED_LEVERAGE / entry))
+    Returns (units_final_abs, margin_cap_applied).
+    """
+    if units_raw <= 0 or nav <= 0 or entry <= 0 or leverage <= 0 or margin_frac <= 0:
+        return 0, False
+
+    est_margin = abs(units_raw) * entry / leverage
+    margin_allowed = nav * margin_frac
+    if est_margin > margin_allowed:
+        units_final = int(abs(margin_allowed * leverage / entry))
+        return max(units_final, 0), True
+    return abs(units_raw), False
+
 
 # ============================================================
 # SWING LOGIC
@@ -266,34 +373,129 @@ class SwingDecision:
     margin_cap_applied: bool
     risk_pct_used: float
 
+
+@dataclass
+class EligibilityResult:
+    eligible: bool
+    direction: Optional[str]
+    reasons: List[str]
+    skip_reason: Optional[str]
+    metrics: Dict[str, Any]
+
+
+def check_eligibility(
+    pair: str,
+    df_d: pd.DataFrame,
+    df_4h: pd.DataFrame,
+    df_1h: pd.DataFrame,
+) -> EligibilityResult:
+    """
+    Explicit eligibility + market-conditions gate.
+    Currently encodes the same behavior as the prior inline logic:
+      - Daily RSI must be >55 or <45 (no neutral swings)
+      - Direction from 4H trend vs 1H RSI alignment
+    """
+    reasons: List[str] = []
+    metrics: Dict[str, Any] = {}
+
+    daily_rsi_series = rsi(df_d["close"])
+    daily_rsi = float(daily_rsi_series.iloc[-1])
+    metrics["daily_rsi"] = daily_rsi
+
+    if not (daily_rsi > 55 or daily_rsi < 45):
+        return EligibilityResult(
+            eligible=False,
+            direction=None,
+            reasons=reasons,
+            skip_reason="Daily RSI neutral (no swing bias)",
+            metrics=metrics,
+        )
+
+    ema50_4h = float(df_4h["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+    price_4h = float(df_4h["close"].iloc[-1])
+    trend = "bullish" if price_4h > ema50_4h else "bearish"
+    metrics["ema50_4h"] = ema50_4h
+    metrics["price_4h"] = price_4h
+    metrics["trend"] = trend
+
+    rsi_1h_series = rsi(df_1h["close"])
+    rsi_1h = float(rsi_1h_series.iloc[-1])
+    metrics["rsi_1h"] = rsi_1h
+
+    if trend == "bullish" and rsi_1h < 45:
+        direction = "BUY"
+        reasons.extend([f"Daily RSI {daily_rsi:.1f}", f"4H {trend}", f"1H RSI {rsi_1h:.1f}"])
+        return EligibilityResult(
+            eligible=True,
+            direction=direction,
+            reasons=reasons,
+            skip_reason=None,
+            metrics=metrics,
+        )
+    if trend == "bearish" and rsi_1h > 55:
+        direction = "SELL"
+        reasons.extend([f"Daily RSI {daily_rsi:.1f}", f"4H {trend}", f"1H RSI {rsi_1h:.1f}"])
+        return EligibilityResult(
+            eligible=True,
+            direction=direction,
+            reasons=reasons,
+            skip_reason=None,
+            metrics=metrics,
+        )
+
+    return EligibilityResult(
+        eligible=False,
+        direction=None,
+        reasons=reasons,
+        skip_reason="1H RSI not aligned with 4H trend",
+        metrics=metrics,
+    )
+
+
 def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optional[SwingDecision]:
+    # Skip if already open on this pair
     if abs(open_pos.get(pair, 0)) > 0:
+        log_decision(
+            {
+                "pair": pair,
+                "action": "SKIP",
+                "stage": "PRECHECK",
+                "reason": "Position already open on this pair",
+            }
+        )
         return None
+
     try:
         df_d = oanda_get_candles(pair, "D", 100)
         df_4h = oanda_get_candles(pair, "H4", 200)
         df_1h = oanda_get_candles(pair, "H1", 200)
     except Exception as e:
         tg(f"{pair} data error → skipped")
+        log_decision(
+            {
+                "pair": pair,
+                "action": "SKIP",
+                "stage": "DATA",
+                "reason": f"Data error: {e}",
+            }
+        )
         return None
 
-    daily_rsi = rsi(df_d["close"]).iloc[-1]
-    if not (daily_rsi > 55 or daily_rsi < 45):
+    elig = check_eligibility(pair, df_d, df_4h, df_1h)
+    if not elig.eligible or not elig.direction:
+        log_decision(
+            {
+                "pair": pair,
+                "action": "SKIP",
+                "stage": "ELIGIBILITY",
+                "reason": elig.skip_reason or "Eligibility gate failed",
+                "metrics": elig.metrics,
+            }
+        )
         return None
 
-    ema50_4h = df_4h["close"].ewm(span=50, adjust=False).mean().iloc[-1]
-    price_4h = df_4h["close"].iloc[-1]
-    trend = "bullish" if price_4h > ema50_4h else "bearish"
-
-    rsi_1h = rsi(df_1h["close"]).iloc[-1]
-    if trend == "bullish" and rsi_1h < 45:
-        direction = "BUY"
-    elif trend == "bearish" and rsi_1h > 55:
-        direction = "SELL"
-    else:
-        return None
-
-    entry = df_1h["close"].iloc[-1]
+    direction = elig.direction
+    entry = float(df_1h["close"].iloc[-1])
     atr_val = atr(df_1h)
     pip_size, precision = get_instrument_info_cached(pair)
     sl_pips = 1.5 * (atr_val / pip_size)
@@ -302,32 +504,62 @@ def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optiona
     sl_price = entry - sl_pips * pip_size if direction == "BUY" else entry + sl_pips * pip_size
     tp_price = entry + tp_pips * pip_size if direction == "BUY" else entry - tp_pips * pip_size
 
-    # Apply min distance + rounding
+    # Apply min distance + rounding (existing behavior)
     sl_price, tp_price = adjust_and_round_sl_tp(pair, entry, sl_price, tp_price, direction)
 
     stop_dist = abs(entry - sl_price)
     pips_risk = stop_dist / pip_size
     pip_val = pip_size if pair.endswith("USD") else pip_size / entry
-    units_raw = int((nav * RISK_PCT) / (pips_risk * pip_val))
+
+    units_raw = compute_units_from_risk(nav, RISK_PCT, pips_risk, pip_val)
     if units_raw == 0:
+        log_decision(
+            {
+                "pair": pair,
+                "action": "SKIP",
+                "stage": "RISK",
+                "reason": "Computed units_raw == 0 (risk too small or invalid inputs)",
+                "metrics": {
+                    "nav": nav,
+                    "pips_risk": pips_risk,
+                    "pip_val": pip_val,
+                    "risk_pct": RISK_PCT,
+                },
+            }
+        )
         return None
 
-    est_margin = abs(units_raw) * entry / ASSUMED_LEVERAGE
-    margin_allowed = nav * MAX_MARGIN_FRAC
-    margin_cap_applied = est_margin > margin_allowed
-    if margin_cap_applied:
-        units_final = int(abs(margin_allowed * ASSUMED_LEVERAGE / entry))
-        risk_pct_used = (units_final * pips_risk * pip_val) / nav
-    else:
-        units_final = units_raw
-        risk_pct_used = RISK_PCT
+    units_final_abs, margin_cap_applied = apply_margin_cap(
+        units_raw=units_raw,
+        nav=nav,
+        entry=entry,
+        leverage=ASSUMED_LEVERAGE,
+        margin_frac=MAX_MARGIN_FRAC,
+    )
+    if units_final_abs == 0:
+        log_decision(
+            {
+                "pair": pair,
+                "action": "SKIP",
+                "stage": "MARGIN",
+                "reason": "Margin cap reduced units to zero",
+                "metrics": {
+                    "nav": nav,
+                    "entry": entry,
+                    "assumed_leverage": ASSUMED_LEVERAGE,
+                    "max_margin_frac": MAX_MARGIN_FRAC,
+                },
+            }
+        )
+        return None
 
-    units_final = units_final if direction == "BUY" else -units_final
+    risk_pct_used = (units_final_abs * pips_risk * pip_val) / nav if nav > 0 else 0.0
+    units_final = units_final_abs if direction == "BUY" else -units_final_abs
 
     return SwingDecision(
         pair=pair,
         direction=direction,
-        reasons=[f"Daily RSI {daily_rsi:.1f}", f"4H {trend}", f"1H RSI {rsi_1h:.1f}"],
+        reasons=elig.reasons,
         entry=entry,
         sl=sl_price,
         tp=tp_price,
@@ -337,19 +569,20 @@ def evaluate_swing(pair: str, nav: float, open_pos: Dict[str, float]) -> Optiona
         risk_pct_used=risk_pct_used,
     )
 
+
 def place_order(dec: SwingDecision):
-    side = "BUY" if dec.units_final > 0 else "SELL"
+    side = dec.direction  # Already "BUY" or "SELL" from eligibility
     precision = get_instrument_info_cached(dec.pair)[1]
 
     payload = {
         "order": {
             "type": "MARKET",
             "instrument": dec.pair,
-            "units": str(dec.units_final),
+            "units": str(dec.units_final if side == "BUY" else -dec.units_final),
             "timeInForce": "FOK",
             "stopLossOnFill": {"price": f"{dec.sl:.{precision}f}"},
             "takeProfitOnFill": {"price": f"{dec.tp:.{precision}f}"},
-            "clientExtensions": {"tag": TAG}
+            "clientExtensions": {"tag": TAG},
         }
     }
     r = session.post(
@@ -357,13 +590,20 @@ def place_order(dec: SwingDecision):
         json=payload,
         timeout=15,
     )
+
     extra = ""
     if dec.margin_cap_applied:
-        extra = f"\n<i>Margin cap hit → scaled {dec.units_raw}→{dec.units_final} units ({dec.risk_pct_used:.2%} risk)</i>"
-    msg = (f"<b>{VERSION}</b>\n"
-           f"{side} {dec.pair} {abs(dec.units_final)} units\n"
-           f"Entry ≈ {dec.entry:.5f} | SL {dec.sl:.{precision}f} | TP {dec.tp:.{precision}f}\n"
-           f"Reasons: {' | '.join(dec.reasons)}{extra}")
+        extra = (
+            f"\n<i>Margin cap hit → scaled {dec.units_raw}→{dec.units_final} units "
+            f"({dec.risk_pct_used:.2%} risk)</i>"
+        )
+
+    msg = (
+        f"<b>{VERSION}</b>\n"
+        f"{side} {dec.pair} {dec.units_final} units\n"
+        f"Entry ≈ {dec.entry:.5f} | SL {dec.sl:.{precision}f} | TP {dec.tp:.{precision}f}\n"
+        f"Reasons: {' | '.join(dec.reasons)}{extra}"
+    )
     tg(msg)
 
     diag = {
@@ -378,11 +618,50 @@ def place_order(dec: SwingDecision):
     }
     save_diag(diag)
 
+    # Structured decision trace for trade taken
+    log_decision(
+        {
+            "pair": dec.pair,
+            "action": "TAKE",
+            "stage": "ORDER",
+            "direction": side,
+            "entry": dec.entry,
+            "sl": dec.sl,
+            "tp": dec.tp,
+            "units_raw": dec.units_raw,
+            "units_final": dec.units_final,
+            "margin_cap_applied": dec.margin_cap_applied,
+            "risk_pct_used": dec.risk_pct_used,
+            "reasons": dec.reasons,
+        }
+    )
+
     if not r.ok:
         tg(f"Order failed {dec.pair}\n{r.text[:200]}")
+        log_decision(
+            {
+                "pair": dec.pair,
+                "action": "ERROR",
+                "stage": "ORDER",
+                "reason": "Order not OK",
+                "response_snippet": r.text[:200],
+                "status_code": r.status_code,
+            }
+        )
+        return
+
     fill = r.json().get("orderFillTransaction", {}).get("price")
     if fill:
         tg(f"{dec.pair} filled @ {fill}")
+        log_decision(
+            {
+                "pair": dec.pair,
+                "action": "FILL",
+                "stage": "ORDER",
+                "fill_price": fill,
+            }
+        )
+
 
 # ============================================================
 # MAIN CYCLE
@@ -390,12 +669,25 @@ def place_order(dec: SwingDecision):
 def main():
     logging.info(f"[SWING] {VERSION} cycle start")
     tg(f"<b>{VERSION}</b> cycle started")
+
     nav = oanda_get_nav()
     open_pos = oanda_open_positions()
     current_open = sum(1 for v in open_pos.values() if abs(v) > 0)
     if current_open >= MAX_OPEN_POSITIONS:
-        tg(f"<b>{VERSION}</b> already at max open positions ({current_open}) – skipping cycle")
+        msg = f"<b>{VERSION}</b> already at max open positions ({current_open}) – skipping cycle"
+        tg(msg)
+        logging.info(f"[SWING] {msg}")
+        log_decision(
+            {
+                "action": "SKIP",
+                "stage": "GLOBAL",
+                "reason": "Max open positions reached",
+                "current_open": current_open,
+                "max_open": MAX_OPEN_POSITIONS,
+            }
+        )
         return
+
     trades = 0
     for pair in INSTRUMENTS:
         if current_open + trades >= MAX_OPEN_POSITIONS:
@@ -404,9 +696,19 @@ def main():
         if dec:
             place_order(dec)
             trades += 1
-            open_pos[pair] = dec.units_final  # prevent double in same cycle
+            # Prevent double-open on same pair within this cycle
+            open_pos[dec.pair] = dec.units_final
+
     tg(f"<b>{VERSION}</b> cycle complete – {trades} swing order(s) submitted")
     logging.info(f"[SWING] Cycle done – {trades} trades")
+    log_decision(
+        {
+            "action": "CYCLE_COMPLETE",
+            "stage": "GLOBAL",
+            "trades_submitted": trades,
+        }
+    )
+
 
 if __name__ == "__main__":
     try:
