@@ -3,9 +3,18 @@
 """
 # Project: Leo Services
 # File: leo
-# Version: v1.9.16 — 2025-12-31
-# Change: Fixed aircraft venv path to use "venv" folder (no dot) to match actual directory created
-# Note: tools/ no longer required — aircraft runs self-contained
+# Version: v1.9.18 — 2026-01-04
+#
+# Change:
+#   • Hardened editor launcher to prevent crashes when `code --wait`
+#     is unsupported (common on CLI / server builds of VS Code).
+#   • Behavior:
+#         - Try `code --wait`
+#         - If unsupported → fallback to vim, then nano
+#         - Never crash operator workflow
+#
+#   • Kraken deploy integration retained (deploy_kraken.sh)
+#
 Leo System Command – leo
 ================================================
 Primary operator interface for Leo Services
@@ -25,7 +34,7 @@ LEO_SRC = LEO_BASE / "leo" / "bin"
 
 # Aircraft subsystem (self-contained)
 AIRCRAFT_DIR = LEO_BASE / "aircraft"
-AIRCRAFT_VENV = AIRCRAFT_DIR / "venv" / "bin" / "python"          # ← Changed from ".venv" to "venv"
+AIRCRAFT_VENV = AIRCRAFT_DIR / "venv" / "bin" / "python"
 AIRCRAFT_SCAN = AIRCRAFT_DIR / "aircraft_price_scan.py"
 
 # MES paths
@@ -33,6 +42,10 @@ MES_SCALP_SRC = LEO_BASE / "mes" / "mes_scalp.py"
 MES_SWING_SRC = LEO_BASE / "mes" / "mes_swing.py"
 MES_SCALP_DEST = Path("/opt/mes/mes_scalp.py")
 MES_SWING_DEST = Path("/opt/mes/mes_swing.py")
+
+# Kraken subsystem
+KRAKEN_DIR = LEO_BASE / "kraken"
+KRAKEN_DEPLOY = KRAKEN_DIR / "deploy_kraken.sh"
 
 EDITABLE_FILES = {
     "mes-run": LEO_SRC / "mes-run",
@@ -60,18 +73,32 @@ def header():
 def has_cmd(cmd: str) -> bool:
     return which(cmd) is not None
 
+# ============================================================
+# SAFE EDITOR LAUNCHER (patched)
+# ============================================================
 def open_editor(path: Path):
     if not path.exists():
         red(f"File not found: {path}")
         return
+
+    # Try VS Code only if --wait is supported
     if has_cmd("code"):
-        run(f"code --wait {path}")
-    elif has_cmd("vim"):
+        ok, _ = run(f"code --wait {path}", capture=True)
+        if ok:
+            return
+        yellow("VS Code detected, but `--wait` not supported — falling back...")
+
+    # Try vim
+    if has_cmd("vim"):
         run(f"vim {path}")
-    elif has_cmd("nano"):
+        return
+
+    # Try nano
+    if has_cmd("nano"):
         run(f"nano {path}")
-    else:
-        red("No editor found (code/vim/nano)")
+        return
+
+    red("No suitable editor found (code/vim/nano)")
 
 def confirm(prompt: str) -> bool:
     while True:
@@ -137,7 +164,7 @@ def ops_menu():
             print("Invalid selection.\n")
 
 # ============================================================
-# Aircraft Pricing Subsystem (local venv)
+# Aircraft Pricing Subsystem
 # ============================================================
 def aircraft():
     header()
@@ -167,9 +194,9 @@ def aircraft():
     run(cmd)
 
 # ============================================================
-# Core Deploy Code – -d for demo only
+# MES Deploy
 # ============================================================
-def deploy_code():
+def deploy_mes():
     header()
     demo_only = "-d" in sys.argv
     yellow(
@@ -180,24 +207,41 @@ def deploy_code():
         run(f"sudo cp -f {MES_SCALP_SRC} {MES_SCALP_DEST}")
         run(f"sudo cp -f {MES_SWING_SRC} {MES_SWING_DEST}")
         run(f"sudo chmod 644 {MES_SCALP_DEST} {MES_SWING_DEST}")
-        green("✔ Files copied successfully")
+        green("✔ MES files copied successfully")
     except subprocess.CalledProcessError:
         red("✖ Copy failed – aborting")
         sys.exit(1)
+
     all_svcs = [
-        "mes_scalp_demo.service", "mes_scalp_live.service",
-        "mes_swing_demo.service", "mes_swing_live.service",
+        "mes_scalp_demo.service","mes_scalp_live.service",
+        "mes_swing_demo.service","mes_swing_live.service",
     ]
     svcs = [s for s in all_svcs if "demo" in s] if demo_only else all_svcs
-    print("\nRestarting services...")
+    print("\nRestarting MES services...")
     for svc in svcs:
         success, output = run(f"sudo systemctl restart {svc}", capture=True)
-        if success:
-            green(f" ✔ {svc}")
-        else:
-            red(f" ✖ {svc}")
-        if output.strip():
-            print(" →", output.strip())
+        if success: green(f" ✔ {svc}")
+        else: red(f" ✖ {svc}")
+        if output.strip(): print(" →", output.strip())
+
+# ============================================================
+# Kraken Deploy
+# ============================================================
+def deploy_kraken():
+    header()
+    yellow("Deploying Kraken stack via deploy_kraken.sh...\n")
+
+    if not KRAKEN_DEPLOY.exists():
+        red("✖ Kraken deploy script not found:")
+        print(f" {KRAKEN_DEPLOY}")
+        print("\nExpected path: ~/leo-services/kraken/deploy_kraken.sh")
+        return
+
+    try:
+        run(f'bash "{KRAKEN_DEPLOY}"')
+        green("\n✔ Kraken deploy completed")
+    except subprocess.CalledProcessError:
+        red("✖ Kraken deploy failed")
 
 # ============================================================
 # Usage
@@ -205,14 +249,15 @@ def deploy_code():
 def usage():
     header()
     print("Daily commands:\n")
-    print(" leo status System health overview")
-    print(" leo edit FILE Edit operator tools")
-    print(" leo deploy code Deploy MES + restart services")
-    print(" leo mes MES operator wrapper")
-    print(" leo ops Operations submenu")
-    print(" leo aircraft Aircraft pricing tools")
-    print(" leo update System package updates")
-    print(" leo reboot Reboot system\n")
+    print(" leo status          System health overview")
+    print(" leo edit FILE       Edit operator tools")
+    print(" leo deploy          Deploy MES")
+    print(" leo deploy kraken   Deploy Kraken stack")
+    print(" leo mes             MES operator wrapper")
+    print(" leo ops             Operations submenu")
+    print(" leo aircraft        Aircraft pricing tools")
+    print(" leo update          System package updates")
+    print(" leo reboot          Reboot system\n")
     sys.exit(0)
 
 # ============================================================
@@ -222,32 +267,27 @@ def status():
     header()
     run("uptime"); print("")
     run("df -h / | tail -n 1"); print("")
-    try:
-        run("systemctl --failed")
-    except subprocess.CalledProcessError:
-        pass
+    try: run("systemctl --failed")
+    except subprocess.CalledProcessError: pass
 
 def edit():
     header()
     if len(sys.argv) == 2:
         print("Editable operator files:\n")
-        for k in EDITABLE_FILES:
-            print(f" leo edit {k}")
-        print("")
-        return
+        for k in EDITABLE_FILES: print(f" leo edit {k}")
+        print(""); return
     target = sys.argv[2].lower()
     if target not in EDITABLE_FILES:
-        red(f"Unknown target: {target}")
-        return
+        red(f"Unknown target: {target}"); return
     path = EDITABLE_FILES[target]
     print(f"Opening {path} ...")
     open_editor(path)
-    installer = LEO_SRC / "leo-install"
-    if installer.exists() and confirm(f"Install updated {target} now?"):
-        run(str(installer))
-        green(f"\n✔ {target} installed")
 
-def deploy(): deploy_code()
+def deploy():
+    if len(sys.argv) > 2 and sys.argv[2].lower() == "kraken":
+        deploy_kraken()
+    else:
+        deploy_mes()
 
 def mes():
     if len(sys.argv) > 2:
@@ -269,10 +309,10 @@ def reboot():
 # Entrypoint
 # ============================================================
 if __name__ == "__main__":
-    if len(sys.argv) == 1 or sys.argv[1] in ("help", "-h", "--help"):
+    if len(sys.argv) == 1 or sys.argv[1] in ("help","-h","--help"):
         usage()
     cmd = sys.argv[1].lower()
-    if cmd == "status": status()
+    if   cmd == "status": status()
     elif cmd == "edit": edit()
     elif cmd == "deploy": deploy()
     elif cmd == "mes": mes()

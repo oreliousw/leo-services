@@ -1,7 +1,8 @@
 {
   "mode": "idle",
   "entry_price": null,
-  "last_swing_high": 90099.8,
+  "last_swing_high": 91671.9,
   "buy_approach_sent": false,
-  "sell_approach_sent": false
+  "sell_approach_sent": false,
+  "entry_time": null
 }

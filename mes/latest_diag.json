@@ -1,0 +1,147 @@
+{
+  "generated_at": "2026-01-04T07:59:14.960520+00:00",
+  "version": "MES v3.5.95 LIVE",
+  "mode": "LIVE",
+  "pairs": {
+    "EUR_USD": {
+      "pair": "EUR_USD",
+      "time": "2026-01-04T07:59:14.960461+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "GBP_USD": {
+      "pair": "GBP_USD",
+      "time": "2026-01-04T07:59:14.960494+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "AUD_USD": {
+      "pair": "AUD_USD",
+      "time": "2026-01-04T07:59:14.960500+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "NZD_USD": {
+      "pair": "NZD_USD",
+      "time": "2026-01-04T07:59:14.960504+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "USD_CAD": {
+      "pair": "USD_CAD",
+      "time": "2026-01-04T07:59:14.960508+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "USD_CHF": {
+      "pair": "USD_CHF",
+      "time": "2026-01-04T07:59:14.960512+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    },
+    "EUR_GBP": {
+      "pair": "EUR_GBP",
+      "time": "2026-01-04T07:59:14.960516+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "sweep_type": "",
+      "confirmation_type": "",
+      "in_zone_ratio": 0.0
+    }
+  }
+}
