@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_trader.py
-# Version: v2.3 — Drawdown Reset & AI-Ready Logging (2026)
+# Version: v2.4 — Tight Buy Trigger & Stable Sell (2026)
 #
 # SYSTEM DESIGN PHILOSOPHY — Kraken MES (Core + Trading Slice)
 #
@@ -26,32 +26,24 @@
 #   • Alerts reflect meaningful cycle events only
 #   • Awareness reporting is informational — not directive
 #
-# v2.2 Direction (previous release):
-#   • Adds near-trigger awareness alerts (one per cycle)
-#       - BUY pre-zone at −3% (trigger remains −4%)
-#       - SELL pre-zone at +4% (target remains +5%)
-#   • Adds context-block debugging on BUY + SELL signals
-#   • Maintains signals-only mode — no order execution
+# v2.3 (previous):
+#   • Added intraday −12% drawdown reset in HOLD
+#   • Structured JSONL logging for drawdown resets (AI/analytics ready)
 #
-# v2.3 Changes — Protective Reset & Logging:
-#   • Adds intraday −12% drawdown reset in HOLD state:
-#       - If unrealized loss from entry reaches ≤ −12% at any time,
-#         cycle exits and moves to reset state (no discretion).
-#   • Sends a clear “Protective Reset (−12%)” Telegram alert with:
-#       - entry price, reset price, loss %, hold duration (days)
-#   • Logs drawdown reset events as structured JSONL records:
-#       - event_type, rule_id, entry/reset context, hold length
-#       - Designed so AI / analytics can evaluate behavior and
-#         propose concise options based on actual history.
+# v2.4 Changes:
+#   • Tightened BUY trigger to −3.0% pullback from swing-high
+#   • BUY awareness moved to −2.5% (keeps ~0.5% gap)
+#   • SELL target remains +5.0% (asymmetric for better BTC accumulation)
+#   • SELL awareness at +4.0% unchanged
+#   • All other logic (reset, logging, daily report, etc.) intact
 #
-# Trading Rules (fixed):
-#   • BUY Trigger:  −4% from swing-high
-#   • SELL Target:  +5% from entry
+# Trading Rules (updated):
+#   • BUY Trigger:  −3.0% from swing-high
+#   • SELL Target:  +5.0% from entry
 #   • Near-Zone Alerts:
-#       - BUY awareness:  −3%
-#       - SELL awareness: +4%
-#   • Safety Reset:
-#       - Protective reset if unrealized loss ≤ −12% from entry
+#       - BUY awareness:  −2.5%
+#       - SELL awareness: +4.0%
+#   • Safety Reset: Protective reset if unrealized loss ≤ −12% from entry
 #   • State Machine: idle → hold → reset
 #
 # Execution Mode:
@@ -99,16 +91,8 @@ LOG_FILE   = Path("kraken_events.jsonl")
 # Logging (AI-ready JSONL)
 # ------------------------------------------------------------
 def log_event(ev: dict):
-    """
-    Append a structured JSON event record to LOG_FILE.
-
-    Designed to be AI/analytics friendly:
-    - One JSON object per line (JSONL)
-    - Always includes UTC timestamp
-    - Safe if logging fails (does not crash engine)
-    """
     try:
-        ev = dict(ev)  # shallow copy
+        ev = dict(ev)
         ev.setdefault("timestamp_utc", datetime.utcnow().isoformat() + "Z")
         with LOG_FILE.open("a") as f:
             f.write(json.dumps(ev, default=str) + "\n")
@@ -158,7 +142,7 @@ def k_private(path: str, params: str):
     req = urllib.request.Request(f"{API_BASE}{path}", post.encode())
     req.add_header("API-Key", API_KEY_PUBLIC)
     req.add_header("API-Sign", signature)
-    req.add_header("User-Agent", "Kraken-MES-v2.3")
+    req.add_header("User-Agent", "Kraken-MES-v2.4")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
 
@@ -189,7 +173,7 @@ def get_kraken_balances():
 
 
 # ------------------------------------------------------------
-# Snapshot Report (unchanged logic)
+# Snapshot Report (unchanged)
 # ------------------------------------------------------------
 def load_snapshot():
     return json.loads(SNAP_FILE.read_text()) if SNAP_FILE.exists() else None
@@ -237,7 +221,7 @@ def run_daily_report():
         f"• BTC: {total_btc:.8f}\n"
         f"• Est Value: ${total_value:,.2f}\n\n"
         f"{pl_line}\n\n"
-        "Mode: Signals-Only — v2.3"
+        "Mode: Signals-Only — v2.4"
     )
 
     save_snapshot(total_value)
@@ -250,7 +234,7 @@ def maybe_run_daily_report():
 
 
 # ------------------------------------------------------------
-# Swing Engine — v2.3 Enhancements
+# Swing Engine — v2.4 Updates
 # ------------------------------------------------------------
 DEFAULT_STATE = {
     "mode": "idle",
@@ -258,7 +242,7 @@ DEFAULT_STATE = {
     "last_swing_high": None,
     "buy_approach_sent": False,
     "sell_approach_sent": False,
-    "entry_time": None,  # timestamp (seconds since epoch) when entering HOLD
+    "entry_time": None,
 }
 
 
@@ -268,7 +252,6 @@ def load_state():
     else:
         s = {}
 
-    # Ensure all expected keys are present (backwards-compatible)
     base = DEFAULT_STATE.copy()
     base.update(s)
     return base
@@ -278,11 +261,11 @@ def save_state(s):
     STATE_FILE.write_text(json.dumps(s, indent=2))
 
 
-BUY_PULLBACK   = -4.0
-BUY_APPROACH   = -3.0
+BUY_PULLBACK   = -3.0
+BUY_APPROACH   = -2.5
 SELL_TARGET    =  5.0
 SELL_APPROACH  =  4.0
-DRAWDOWN_RESET = -12.0  # protective reset threshold (unrealized loss %)
+DRAWDOWN_RESET = -12.0
 
 
 def get_price():
@@ -294,11 +277,9 @@ def engine_tick():
     s = load_state()
     p = get_price()
 
-    # Initialize swing high on first run
     if s["last_swing_high"] is None:
         s["last_swing_high"] = p
 
-    # Update swing high and clear BUY-awareness when making new highs
     if p > s["last_swing_high"]:
         s["last_swing_high"] = p
         s["buy_approach_sent"] = False
@@ -308,7 +289,6 @@ def engine_tick():
     # --- IDLE STATE ---
     if s["mode"] == "idle":
 
-        # Near BUY zone awareness
         if not s["buy_approach_sent"] and pullback <= BUY_APPROACH:
             buy_trigger = s["last_swing_high"] * (1 + BUY_PULLBACK / 100)
             tg_send(
@@ -316,12 +296,11 @@ def engine_tick():
                 f"• Pullback: {pullback:.2f}%\n"
                 f"• Swing High: {s['last_swing_high']:.2f}\n"
                 f"• Current: {p:.2f}\n"
-                f"• Buy Trigger: {buy_trigger:.2f} (-4%)\n\n"
+                f"• Buy Trigger: {buy_trigger:.2f} (-3%)\n\n"
                 "Info Only — No Action"
             )
             s["buy_approach_sent"] = True
 
-        # BUY trigger
         if pullback <= BUY_PULLBACK:
             s["entry_price"] = p
             s["entry_time"] = time.time()
@@ -334,39 +313,30 @@ def engine_tick():
                 f"Pullback: {pullback:.2f}%\n\n"
                 "Context:\n"
                 f"• Swing High: {s['last_swing_high']:.2f}\n"
-                f"• Buy Trigger: {buy_trigger:.2f} (-4%)\n"
+                f"• Buy Trigger: {buy_trigger:.2f} (-3%)\n"
                 f"• Current: {p:.2f}\n"
                 f"• Distance Past Trigger: {(pct(buy_trigger, p)):.2f}%\n\n"
-                "Engine: v2.3 (signals-only)"
+                "Engine: v2.4 (signals-only)"
             )
 
     # --- HOLD STATE ---
     elif s["mode"] == "hold":
         if not s["entry_price"]:
-            # Safety: if somehow in HOLD without entry, fall back to idle
             s["mode"] = "idle"
         else:
-            gain = pct(s["entry_price"], p)  # positive = profit, negative = loss
+            gain = pct(s["entry_price"], p)
             sell_target = s["entry_price"] * (1 + SELL_TARGET / 100)
 
-            # --- Protective Drawdown Reset (v2.3) ---
+            # Protective Drawdown Reset
             if gain <= DRAWDOWN_RESET:
-                # Compute hold duration
-                if s.get("entry_time"):
-                    hold_days = (time.time() - s["entry_time"]) / 86400.0
-                else:
-                    hold_days = 0.0
-
+                hold_days = (time.time() - s["entry_time"]) / 86400.0 if s.get("entry_time") else 0.0
                 swing_high = s.get("last_swing_high")
-                pullback_at_entry = (
-                    pct(swing_high, s["entry_price"]) if swing_high else None
-                )
+                pullback_at_entry = pct(swing_high, s["entry_price"]) if swing_high else None
 
-                # Log structured event for AI/analytics
                 log_event({
                     "event_type": "drawdown_reset",
                     "rule_id": "drawdown_reset_12_intraday",
-                    "engine_version": "v2.3",
+                    "engine_version": "v2.4",
                     "asset": "XBTUSD",
                     "mode_before": "hold",
                     "entry_price": s["entry_price"],
@@ -378,13 +348,12 @@ def engine_tick():
                     "pullback_pct_at_reset": pct(swing_high, p) if swing_high else None,
                     "next_action": "wait_for_next_cycle_in_reset_state",
                     "notes_ai_hints": [
-                        "evaluate whether -12% reset threshold balances protection vs churn",
-                        "compare outcomes of drawdown_reset cycles vs normal SELL_TARGET cycles",
-                        "check if entries at -4% pullback are systematically early during large declines"
+                        "evaluate -12% reset threshold vs churn",
+                        "compare drawdown_reset vs SELL_TARGET cycles",
+                        "check -3% entries during large declines"
                     ],
                 })
 
-                # Telegram alert for operator
                 tg_send(
                     "⚠️ Protective Reset Triggered (−12% Drawdown)\n\n"
                     f"Entry: {s['entry_price']:.2f}\n"
@@ -394,14 +363,12 @@ def engine_tick():
                     "Status: Position closed — system now in RESET state,\n"
                     "waiting for the next valid cycle.\n\n"
                     "Mode: AUTOPILOT | Rule: drawdown_reset_12\n"
-                    "Engine: v2.3 (signals-only)"
+                    "Engine: v2.4 (signals-only)"
                 )
 
-                # Move to RESET; leave entry data for context until next cycle
                 s["mode"] = "reset"
 
             else:
-                # Near SELL target awareness
                 if not s["sell_approach_sent"] and gain >= SELL_APPROACH:
                     tg_send(
                         "🟣 Approaching SELL Target\n"
@@ -413,7 +380,6 @@ def engine_tick():
                     )
                     s["sell_approach_sent"] = True
 
-                # SELL target hit
                 if gain >= SELL_TARGET:
                     s["mode"] = "reset"
                     tg_send(
@@ -426,17 +392,15 @@ def engine_tick():
                         f"• Current: {p:.2f}\n"
                         f"• Distance Above Target: {(pct(sell_target, p)):.2f}%\n\n"
                         "Cycle Complete — waiting for next dip\n"
-                        "Engine: v2.3 (signals-only)"
+                        "Engine: v2.4 (signals-only)"
                     )
 
     # --- RESET STATE ---
     elif s["mode"] == "reset":
-        # Standard re-arm behavior: once conditions line up again, go back to idle
         if pullback <= BUY_PULLBACK:
             s["mode"] = "idle"
             s["buy_approach_sent"] = False
-            # entry_time remains from prior cycle for context; can be overwritten on next BUY
-            tg_send("⚙️ Reset complete — new cycle armed\nEngine: v2.3")
+            tg_send("⚙️ Reset complete — new cycle armed\nEngine: v2.4")
 
     save_state(s)
 
@@ -447,9 +411,9 @@ def engine_tick():
 if __name__ == "__main__":
     try:
         maybe_run_daily_report()
-        print("Kraken Trader v2.3 tick OK")
+        print("Kraken Trader v2.4 tick OK")
         engine_tick()
     except Exception as e:
-        tg_send(f"❌ Kraken v2.3 runtime error:\n{e}")
+        tg_send(f"❌ Kraken v2.4 runtime error:\n{e}")
         print(f"[FATAL] {e}")
         sys.exit(1)
