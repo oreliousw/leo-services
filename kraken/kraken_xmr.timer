@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Kraken XMR Trader ea 5 min
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+AccuracySec=30s
+Unit=kraken_xmr.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

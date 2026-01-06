@@ -1,0 +1,3 @@
+timestamp_utc,pair,direction,sweep_type,confirmation_type,retest_distance_pips,zone_radius_pips,in_zone_ratio,tp_pips,sl_pips,exec_units,was_margin_capped,session_hour_utc
+2026-01-05T14:29:03.302742+00:00,EUR_USD,bearish,high_sweep,wick_reject,1.2,3.17,0.379,7.03,3.7,456197,True,14
+2026-01-05T14:29:12.261491+00:00,EUR_USD,bearish,high_sweep,wick_reject,1.2,3.17,0.379,7.03,3.7,2787,False,14

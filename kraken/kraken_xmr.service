@@ -1,5 +1,5 @@
 [Unit]
-Description=Kraken Trader – MES Crypto Engine
+Description=Kraken XMR Trader – MES Crypto Engine
 After=network-online.target
 Wants=network-online.target
 
@@ -15,7 +15,7 @@ EnvironmentFile=/home/ubu/leo-services/secrets/global.op.env
 EnvironmentFile=/home/ubu/leo-services/secrets/kraken_trade.op.env
 
 # 3) Run inside op session
-ExecStart=/usr/bin/op run -- /usr/bin/python3 /home/ubu/leo-services/kraken/kraken_trader.py
+ExecStart=/usr/bin/op run -- /usr/bin/python3 /home/ubu/leo-services/kraken/kraken_xmr.py
 
 Restart=on-failure
 RestartSec=5

@@ -2,3 +2,52 @@
 [2026-01-03 11:52:15,831] INFO: [MES] MES v3.5.95 LIVE starting cycle
 [2026-01-03 23:59:10,334] INFO: [MES] MES v3.5.95 DEMO starting cycle
 [2026-01-03 23:59:14,594] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 14:56:21,206] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-04 14:57:41,848] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 15:35:58,979] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-04 16:15:03,524] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 16:30:02,818] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 16:48:30,521] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-04 17:00:02,735] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 17:30:02,801] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 18:00:02,707] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 18:30:03,024] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 19:00:02,749] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 19:30:03,041] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 20:00:02,724] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 20:30:02,702] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 21:00:02,734] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 21:30:02,836] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 22:00:02,744] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-04 22:00:02,770] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 22:30:02,890] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 23:00:02,838] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-04 23:30:02,823] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 00:00:02,827] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 00:30:02,764] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 01:00:02,817] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 01:30:02,833] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 02:00:02,705] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 02:30:02,724] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 03:00:02,803] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 03:30:02,771] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 04:00:03,262] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 04:30:02,889] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 05:00:02,890] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 05:30:03,017] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 06:00:02,731] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 06:06:52,406] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 06:29:01,837] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-05 06:29:04,667] INFO: [MES] Placing SELL EUR_USD 456197 SL=1.16835 TP=1.16728
+[2026-01-05 06:29:04,793] INFO: [MES] OANDA_FILL_RAW: {"orderCreateTransaction": {"id": "9424", "accountID": "101-001-30887082-001", "userID": 30887082, "batchID": "9424", "requestID": "115500340720742161", "time": "2026-01-05T14:29:04.726600774Z", "type": "MARKET_ORDER", "instrument": "EUR_USD", "units": "-456197", "timeInForce": "FOK", "positionFill": "DEFAULT", "takeProfitOnFill": {"price": "1.16728", "timeInForce": "GTC"}, "stopLossOnFill": {"price": "1.16835", "timeInForce": "GTC", "triggerMode": "TOP_OF_BOOK"}, "reason": "CLIENT_ORDER", "clientExtensions": {"tag": "MESv3.5.95_proRetest"}}, "orderFillTransaction": {"id": "9425", "accountID": "101-001-30887082-001", "userID": 30887082, "batchID": "9424", "requestID": "115500340720742161", "time": "2026-01-05T14:29:04.726600774Z", "type": "ORDER_FILL", "orderID": "9424", "instrument": "EUR_USD", "units": "-456197", "requestedUnits": "-456197", "price": "1.16778", "pl": "0.0000", "quotePL": "0", "financing": "0.0000", "baseFinancing": "0", "commission": "0.0000", "accountBalance": "89032.0073", "gainQuoteHomeConversionFactor": "1", "lossQuoteHomeConversionFactor": "1", "guaranteedExecutionFee": "0.0000", "quoteGuaranteedExecutionFee": "0", "halfSpreadCost": "36.4958", "fullVWAP": "1.16778", "reason": "MARKET_ORDER", "tradeOpened": {"price": "1.16778", "tradeID": "9425", "units": "-456197", "guaranteedExecutionFee": "0.0000", "quoteGuaranteedExecutionFee": "0", "halfSpreadCost": "36.4958", "initialMarginRequired": "10655.4846"}, "fullPrice": {"closeoutBid": "1.16769", "closeoutAsk": "1.16804", "timestamp": "2026-01-05T14:29:04.534808190Z", "bids": [{"price": "1.16778", "liquidity": "500000"}, {"price": "1.16777", "liquidity": "500000"}, {"price": "1.16776", "liquidity": "2000000"}, {"price": "1.16775", "liquidity": "2000000"}, {"price": "1.16774", "liquidity": "5000000"}, {"price": "1.16772", "liquidity": "10000000"}, {"price": "1.16769", "liquidity": "10000000"}], "asks": [{"price": "1.16794", "liquidity": "500000"}, {"price": "1.16796", "liquidity": "2500000"}, {"price": "1.16797", "liquidity": "2000000"}, {"price": "1.16798", "liquidity": "5000000"}, {"price": "1.16801", "liquidity": "10000000"}, {"price": "1.16804", "liquidity": "10000000"}]}, "homeConversionFactors": {"gainQuoteHome": {"factor": "1"}, "lossQuoteHome": {"factor": "1"}, "gainBaseHome": {"factor": "1.16202070"}, "lossBaseHome": {"factor": "1.17369930"}}}, "relatedTransactionIDs": ["9424", "9425", "9426", "9427"], "lastTransactionID": "9427"}
+[2026-01-05 06:29:11,899] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 06:29:13,146] INFO: [MES] Placing SELL EUR_USD 2787 SL=1.16835 TP=1.16728
+[2026-01-05 06:29:13,243] INFO: [MES] OANDA_FILL_RAW: {"orderCreateTransaction": {"id": "12855", "accountID": "001-001-13273779-001", "userID": 13273779, "batchID": "12855", "requestID": "169543536288612066", "time": "2026-01-05T14:29:13.197049438Z", "type": "MARKET_ORDER", "instrument": "EUR_USD", "units": "-2787", "timeInForce": "FOK", "positionFill": "DEFAULT", "takeProfitOnFill": {"price": "1.16728", "timeInForce": "GTC"}, "stopLossOnFill": {"price": "1.16835", "timeInForce": "GTC", "triggerMode": "TOP_OF_BOOK"}, "reason": "CLIENT_ORDER", "clientExtensions": {"tag": "MESv3.5.95_proRetest"}}, "orderFillTransaction": {"id": "12856", "accountID": "001-001-13273779-001", "userID": 13273779, "batchID": "12855", "requestID": "169543536288612066", "time": "2026-01-05T14:29:13.197049438Z", "type": "ORDER_FILL", "orderID": "12855", "instrument": "EUR_USD", "units": "-2787", "requestedUnits": "-2787", "price": "1.16780", "pl": "0.0000", "quotePL": "0", "financing": "0.0000", "baseFinancing": "0", "commission": "0.0000", "accountBalance": "128.9252", "gainQuoteHomeConversionFactor": "1", "lossQuoteHomeConversionFactor": "1", "guaranteedExecutionFee": "0.0000", "quoteGuaranteedExecutionFee": "0", "halfSpreadCost": "0.1951", "fullVWAP": "1.16780", "reason": "MARKET_ORDER", "tradeOpened": {"price": "1.16780", "tradeID": "12856", "units": "-2787", "guaranteedExecutionFee": "0.0000", "quoteGuaranteedExecutionFee": "0", "halfSpreadCost": "0.1951", "initialMarginRequired": "65.0971"}, "fullPrice": {"closeoutBid": "1.16771", "closeoutAsk": "1.16804", "timestamp": "2026-01-05T14:29:12.884421954Z", "bids": [{"price": "1.16780", "liquidity": "500000"}, {"price": "1.16779", "liquidity": "500000"}, {"price": "1.16778", "liquidity": "2000000"}, {"price": "1.16777", "liquidity": "2000000"}, {"price": "1.16776", "liquidity": "5000000"}, {"price": "1.16774", "liquidity": "10000000"}, {"price": "1.16771", "liquidity": "10000000"}], "asks": [{"price": "1.16794", "liquidity": "500000"}, {"price": "1.16796", "liquidity": "2500000"}, {"price": "1.16797", "liquidity": "2000000"}, {"price": "1.16798", "liquidity": "5000000"}, {"price": "1.16801", "liquidity": "10000000"}, {"price": "1.16804", "liquidity": "10000000"}]}, "homeConversionFactors": {"gainQuoteHome": {"factor": "1"}, "lossQuoteHome": {"factor": "1"}, "gainBaseHome": {"factor": "1.16203065"}, "lossBaseHome": {"factor": "1.17370935"}}}, "relatedTransactionIDs": ["12855", "12856", "12857", "12858"], "lastTransactionID": "12858"}
+[2026-01-05 07:16:18,752] INFO: [MES] MES v3.5.96 DEMO starting cycle
+[2026-01-05 07:16:29,328] INFO: [MES] MES v3.5.96 LIVE starting cycle
+[2026-01-05 07:45:41,234] INFO: [MES] MES v3.5.96 DEMO starting cycle
+[2026-01-05 07:45:51,397] INFO: [MES] MES v3.5.96 LIVE starting cycle
+[2026-01-05 08:45:00,874] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-05 08:45:12,628] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-05 08:50:49,014] INFO: [MES] MES v3.5.95 DEMO starting cycle
+[2026-01-05 08:50:57,530] INFO: [MES] MES v3.5.95 LIVE starting cycle

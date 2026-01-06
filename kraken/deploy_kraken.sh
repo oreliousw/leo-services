@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
 set -e
 
-SERVICE_NAME="kraken_trade.service"
-TIMER_NAME="kraken_trade.timer"
 REPO_DIR="/home/ubu/leo-services/kraken"
 SYSTEMD_DIR="/etc/systemd/system"
 
-echo "=== Kraken Deploy ==="
+UNITS=(
+  "kraken_btc.service"
+  "kraken_btc.timer"
+  "kraken_xmr.service"
+  "kraken_xmr.timer"
+)
 
-echo "Stopping timer..."
-sudo systemctl disable --now $TIMER_NAME || true
+echo "=== Kraken Deploy (symlink mode) ==="
 
-echo "Ensuring symlinks..."
-sudo rm -f $SYSTEMD_DIR/$SERVICE_NAME
-sudo rm -f $SYSTEMD_DIR/$TIMER_NAME
+echo "Stopping timers..."
+for U in "${UNITS[@]}"; do
+  if [[ "$U" == *.timer ]]; then
+    sudo systemctl disable --now "$U" || true
+  fi
+done
 
-sudo ln -s $REPO_DIR/$SERVICE_NAME $SYSTEMD_DIR/$SERVICE_NAME
-sudo ln -s $REPO_DIR/$TIMER_NAME   $SYSTEMD_DIR/$TIMER_NAME
+echo "Refreshing symlinks..."
+for U in "${UNITS[@]}"; do
+  sudo rm -f "$SYSTEMD_DIR/$U"
+  sudo ln -s "$REPO_DIR/$U" "$SYSTEMD_DIR/$U"
+done
 
 echo "Reloading systemd..."
 sudo systemctl daemon-reload
 
-echo "Starting timer..."
-sudo systemctl enable --now $TIMER_NAME
+echo "Starting timers..."
+sudo systemctl enable --now kraken_btc.timer
+sudo systemctl enable --now kraken_xmr.timer
 
-echo "Timer status:"
+echo "Active Kraken timers:"
 systemctl list-timers | grep kraken || true
 
-echo "Optional test run (service context)..."
-sudo systemctl start kraken_trade.service
+echo "Optional test tick..."
+sudo systemctl start kraken_btc.service || true
+sudo systemctl start kraken_xmr.service || true
 
 echo "=== Deploy Complete ==="

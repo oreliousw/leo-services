@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-01-04T07:59:14.960520+00:00",
+  "generated_at": "2026-01-05T16:51:02.035615+00:00",
   "version": "MES v3.5.95 LIVE",
   "mode": "LIVE",
   "pairs": {
     "EUR_USD": {
       "pair": "EUR_USD",
-      "time": "2026-01-04T07:59:14.960461+00:00",
+      "time": "2026-01-05T16:50:57.860747+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF RSI misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -25,11 +25,12 @@
     },
     "GBP_USD": {
       "pair": "GBP_USD",
-      "time": "2026-01-04T07:59:14.960494+00:00",
+      "time": "2026-01-05T16:50:58.352396+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "Init",
+        "Not in retest zone"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -45,11 +46,12 @@
     },
     "AUD_USD": {
       "pair": "AUD_USD",
-      "time": "2026-01-04T07:59:14.960500+00:00",
+      "time": "2026-01-05T16:50:59.075557+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "Init",
+        "Not in retest zone"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -65,11 +67,12 @@
     },
     "NZD_USD": {
       "pair": "NZD_USD",
-      "time": "2026-01-04T07:59:14.960504+00:00",
+      "time": "2026-01-05T16:50:59.729429+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "Init",
+        "Not in retest zone"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -85,11 +88,11 @@
     },
     "USD_CAD": {
       "pair": "USD_CAD",
-      "time": "2026-01-04T07:59:14.960508+00:00",
+      "time": "2026-01-05T16:51:00.422917+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF RSI misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -105,11 +108,11 @@
     },
     "USD_CHF": {
       "pair": "USD_CHF",
-      "time": "2026-01-04T07:59:14.960512+00:00",
+      "time": "2026-01-05T16:51:00.914981+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF RSI misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -125,11 +128,12 @@
     },
     "EUR_GBP": {
       "pair": "EUR_GBP",
-      "time": "2026-01-04T07:59:14.960516+00:00",
+      "time": "2026-01-05T16:51:01.364589+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "Init",
+        "Not in retest zone"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
