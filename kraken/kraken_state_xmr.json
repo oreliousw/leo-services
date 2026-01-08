@@ -1,10 +1,11 @@
 {
-  "mode": "hold",
+  "mode": "reset",
   "entry_price": 442.59,
-  "last_swing_high": 456.72,
-  "buy_approach_sent": true,
+  "last_swing_high": 464.99,
+  "last_swing_low": 452.2,
+  "buy_approach_sent": false,
   "sell_approach_sent": false,
   "entry_time": 1767795720.8491502,
-  "usd_slice": 0.0,
-  "last_heartbeat": 1767786684.780944
+  "usd_slice": 27.5758367085,
+  "last_heartbeat": 1767883189.9390142
 }

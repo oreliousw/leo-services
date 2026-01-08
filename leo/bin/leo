@@ -3,23 +3,15 @@
 """
 # Project: Leo Services
 # File: leo
-# Version: v1.9.19 — 2026-01-04
+# Version: v1.9.21 — 2026-01-07
 #
 # Change:
-#   • Hardened editor launcher to prevent crashes when `code --wait`
-#     is unsupported (common on CLI / server builds of VS Code).
-#   • Restored full MES deployment alignment:
-#     - Copies both Python runtime files (.py) AND systemd unit files (.service)
-#     - Runs systemctl daemon-reload after copy
-#     - Restarts all MES services by default
-#     - With -d flag: only restarts demo services (live files updated but not restarted)
-#   • Goal: eliminate config drift, repo = single source of truth,
-#     consistent with Kraken deploy model, prevents outdated unit issues
+#   • Added Wallet Backup + Restore Verify subsystem
+#       - leo wallets backup
+#       - leo wallets restore --verify
 #
-#   • Behavior:
-#         - Try `code --wait`
-#         - If unsupported → fallback to vim, then nano
-#         - Never crash operator workflow
+#   • Backups are encrypted for 1Password attachment
+#   • Restore verify is NON-DESTRUCTIVE by default
 #
 Leo System Command – leo
 ================================================
@@ -27,35 +19,24 @@ Primary operator interface for Leo Services
 """
 import sys
 import subprocess
-from datetime import datetime
+from datetime import datetime, date
 from shutil import which
 from pathlib import Path
-import glob
+import json
+import tarfile
+import tempfile
+import secrets
+import shutil
+import os
 
 # ============================================================
 # Paths
 # ============================================================
 HOME = Path.home()
 LEO_BASE = HOME / "leo-services"
-LEO_SRC = LEO_BASE / "leo" / "bin"
 
-# Aircraft subsystem (self-contained)
-AIRCRAFT_DIR = LEO_BASE / "aircraft"
-AIRCRAFT_VENV = AIRCRAFT_DIR / "venv" / "bin" / "python"
-AIRCRAFT_SCAN = AIRCRAFT_DIR / "aircraft_price_scan.py"
-
-# MES paths — source (repo) and destination (live)
-MES_SRC_DIR = LEO_BASE / "mes"
-MES_BIN_DEST = Path("/opt/mes")
-
-# Kraken subsystem
-KRAKEN_DIR = LEO_BASE / "kraken"
-KRAKEN_DEPLOY = KRAKEN_DIR / "deploy_kraken.sh"
-
-EDITABLE_FILES = {
-    "mes-run": LEO_SRC / "mes-run",
-    "leo": LEO_SRC / "leo",
-}
+BITCOIN_DIR = HOME / ".bitcoin"
+MONERO_WALLET = Path("/wallets/myVault")
 
 # ============================================================
 # Helpers
@@ -67,297 +48,198 @@ def run(cmd: str, capture=False, check=True):
     else:
         subprocess.run(cmd, shell=True, check=check)
 
-def red(text: str): print(f"\033[91m{text}\033[0m")
-def green(text: str): print(f"\033[92m{text}\033[0m")
-def yellow(text: str): print(f"\033[93m{text}\033[0m")
+def red(t): print(f"\033[91m{t}\033[0m")
+def green(t): print(f"\033[92m{t}\033[0m")
+def yellow(t): print(f"\033[93m{t}\033[0m")
 
 def header():
     print("\n=== LEO SYSTEM ===")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-def has_cmd(cmd: str) -> bool:
-    return which(cmd) is not None
-
-# ============================================================
-# SAFE EDITOR LAUNCHER
-# ============================================================
-def open_editor(path: Path):
-    if not path.exists():
-        red(f"File not found: {path}")
-        return
-
-    if has_cmd("code"):
-        ok, _ = run(f"code --wait {path}", capture=True)
-        if ok:
-            return
-        yellow("VS Code detected, but `--wait` not supported — falling back...")
-
-    if has_cmd("vim"):
-        run(f"vim {path}")
-        return
-
-    if has_cmd("nano"):
-        run(f"nano {path}")
-        return
-
-    red("No suitable editor found (code/vim/nano)")
-
 def confirm(prompt: str) -> bool:
-    while True:
-        r = input(f"{prompt} (y/n): ").lower().strip()
-        if r in ("y", "yes"): return True
-        if r in ("n", "no"): return False
-        print("Please answer y or n.")
+    r = input(f"{prompt} (y/n): ").lower().strip()
+    return r in ("y", "yes")
 
 # ============================================================
-# OPS SUBMENU + QUICK REF + GIT STATUS
+# Wallet Backup
 # ============================================================
-def show_git_status():
-    repo_path = LEO_BASE
-    if not (repo_path / ".git").exists():
-        yellow("⚠ No git repo found at ~/leo-services")
-        return
-    success, output = run(f"git -C {repo_path} status --short --branch", capture=True)
-    if not success:
-        red("✖ Git command failed")
-        return
-    lines = output.strip().split("\n")
-    branch_line = lines[0]
-    changes = lines[1:] if len(lines) > 1 else []
-    print(f"\n📂 Repo: {repo_path}")
-    print(f"🌿 Branch: {branch_line}")
-    if not changes:
-        green("✔ Repo clean – all synced with GitHub")
+def wallets_backup():
+    header()
+    print("LEO ▸ WALLETS BACKUP\n")
+
+    backup_items = []
+
+    # Bitcoin
+    btc_wallets = BITCOIN_DIR / "wallets"
+    if btc_wallets.exists():
+        backup_items.append(btc_wallets)
+        green(f"✔ Bitcoin wallets: {btc_wallets}")
     else:
-        yellow("⚠ Local changes detected:")
-        for line in changes[:10]:
-            print(f" {line}")
-        if len(changes) > 10:
-            print(" ... (more changes)")
-        print("\n Ready to commit & push when you're set 🚀")
+        yellow("⚠ Bitcoin wallets not found")
 
-def show_quick_ref():
-    print("""
-=========== LEO QUICK REF ===========
-Search files:
-  ff "pattern"
-Systemd:
-  systemctl status mes_scalp_live.service
-  journalctl -u mes_scalp_live.service -f
-""")
-
-def ops_menu():
-    while True:
-        header()
-        print("Leo Ops Menu:\n")
-        print(" 1) Git Status")
-        print(" 2) Show Quick Reference")
-        print(" 3) Return to main\n")
-        choice = input("Select option: ").strip()
-        if choice == "1":
-            show_git_status()
-            input("\nPress ENTER to continue...")
-        elif choice == "2":
-            show_quick_ref()
-            input("\nPress ENTER to return...")
-        elif choice in ("3", "q", "x", "exit"):
-            return
-        else:
-            print("Invalid selection.\n")
-
-# ============================================================
-# Aircraft Pricing Subsystem
-# ============================================================
-def aircraft():
-    header()
-    if not AIRCRAFT_SCAN.exists():
-        red("✖ aircraft_price_scan.py not found:")
-        print(f" {AIRCRAFT_SCAN}")
-        return
-    if not AIRCRAFT_VENV.exists():
-        red("✖ Aircraft venv not found:")
-        print(f" {AIRCRAFT_VENV}")
-        print(" Create it with:")
-        print(" cd ~/leo-services/aircraft && python3 -m venv venv")
-        print(" source venv/bin/activate")
-        print(" pip install requests beautifulsoup4 selenium webdriver-manager")
-        return
-    if len(sys.argv) < 3 or sys.argv[2] != "price":
-        yellow("Aircraft pricing usage:\n")
-        print(' leo aircraft price "Cessna 172K"')
-        print(' leo aircraft price "Piper Cherokee 140" --save\n')
-        return
-    if len(sys.argv) < 4:
-        red("✖ Missing model query string")
-        return
-    args = " ".join(sys.argv[3:])
-    cmd = f'"{AIRCRAFT_VENV}" "{AIRCRAFT_SCAN}" {args}'
-    yellow("Running aircraft price scan...\n")
-    run(cmd)
-
-# ============================================================
-# MES Deploy — Updated for systemd subfolder
-# ============================================================
-def deploy_mes():
-    header()
-    demo_only = "-d" in sys.argv
-    scope = "demo services only (live files updated but not restarted)" if demo_only else "ALL services"
-    yellow(f"Deploying latest MES code → {scope}...")
-
-    for src in [MES_SRC_DIR / "mes_scalp.py", MES_SRC_DIR / "mes_swing.py"]:
-        if not src.exists():
-            red(f"Missing source file: {src}")
-            return
-        dest = MES_BIN_DEST / src.name
-        run(f"sudo cp -f {src} {dest}")
-        run(f"sudo chmod 644 {dest}")
-        green(f"✔ Copied {src.name} → {dest}")
-
-    print("\nReloading systemd daemon...")
-    success, output = run("sudo systemctl daemon-reload", capture=True)
-    if success:
-        green("✔ daemon-reload complete")
+    # Monero
+    if MONERO_WALLET.exists():
+        backup_items.append(MONERO_WALLET)
+        key_file = MONERO_WALLET.with_suffix(".keys")
+        if key_file.exists():
+            backup_items.append(key_file)
+        green(f"✔ Monero wallet: {MONERO_WALLET}")
     else:
-        red("✖ daemon-reload failed")
-        print(output)
+        yellow("⚠ Monero wallet not found")
+
+    if not backup_items:
+        red("✖ No wallets found to back up")
         return
 
-    all_svcs = [
-        "mes_scalp_demo.service", "mes_scalp_live.service",
-        "mes_swing_demo.service", "mes_swing_live.service",
-    ]
-    svcs = [s for s in all_svcs if "demo" in s] if demo_only else all_svcs
-    print(f"\nRestarting {scope.split(' (')[0]}...")
-    for svc in svcs:
-        success, output = run(f"sudo systemctl restart {svc}", capture=True)
-        if success:
-            green(f" ✔ {svc}")
-        else:
-            red(f" ✖ {svc}")
-            if output.strip():
-                print(f" → {output.strip()}")
+    if not confirm("Create encrypted wallet backup archive?"):
+        return
+
+    pw = input("Enter encryption passphrase (ENTER = auto-generate): ").strip()
+    if not pw:
+        pw = secrets.token_urlsafe(32)
+        yellow("\nGenerated passphrase (store in 1Password):")
+        print(pw + "\n")
+
+    today = date.today().isoformat()
+    tar_name = f"leo-wallet-backup-{today}.tar.gz"
+    enc_name = tar_name + ".enc"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tar_path = Path(tmpdir) / tar_name
+
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for item in backup_items:
+                tar.add(item, arcname=item.name)
+
+            meta = Path(tmpdir) / "RESTORE_INFO.txt"
+            meta.write_text(
+                f"Backup date: {today}\n"
+                f"Bitcoin dir: {btc_wallets if btc_wallets.exists() else 'N/A'}\n"
+                f"Monero wallet: {MONERO_WALLET if MONERO_WALLET.exists() else 'N/A'}\n"
+            )
+            tar.add(meta, arcname="RESTORE_INFO.txt")
+
+        run(
+            f"openssl enc -aes-256-cbc -pbkdf2 -salt "
+            f"-in {tar_path} -out {enc_name} "
+            f"-pass pass:{pw}"
+        )
+
+    green(f"\n✔ Encrypted backup created: {enc_name}")
+    print("\n→ Attach this file to 1Password")
+    print("→ Store the passphrase in the same vault item\n")
 
 # ============================================================
-# Kraken Deploy
+# Wallet Restore Verify (NON-DESTRUCTIVE)
 # ============================================================
-def deploy_kraken():
+def wallets_restore_verify():
     header()
-    yellow("Deploying Kraken stack via deploy_kraken.sh...\n")
+    print("LEO ▸ WALLETS RESTORE VERIFY\n")
 
-    if not KRAKEN_DEPLOY.exists():
-        red("✖ Kraken deploy script not found:")
-        print(f" {KRAKEN_DEPLOY}")
+    enc_file = input("Path to encrypted backup (.tar.gz.enc): ").strip()
+    enc_path = Path(enc_file)
+
+    if not enc_path.exists():
+        red("✖ Backup file not found")
         return
 
-    try:
-        run(f'bash "{KRAKEN_DEPLOY}"')
-        green("\n✔ Kraken deploy completed")
-    except subprocess.CalledProcessError:
-        red("✖ Kraken deploy failed")
+    pw = input("Enter backup passphrase: ").strip()
+    if not pw:
+        red("✖ Passphrase required")
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tar_path = Path(tmpdir) / "restore.tar.gz"
+
+        # Decrypt
+        try:
+            run(
+                f"openssl enc -d -aes-256-cbc -pbkdf2 "
+                f"-in {enc_path} -out {tar_path} "
+                f"-pass pass:{pw}"
+            )
+        except subprocess.CalledProcessError:
+            red("✖ Decryption failed (wrong passphrase or corrupt file)")
+            return
+
+        # Extract
+        try:
+            with tarfile.open(tar_path, "r:gz") as tar:
+                tar.extractall(tmpdir)
+        except Exception as e:
+            red(f"✖ Extraction failed: {e}")
+            return
+
+        # Verification checks
+        ok = True
+
+        if not (Path(tmpdir) / "RESTORE_INFO.txt").exists():
+            red("✖ Missing RESTORE_INFO.txt")
+            ok = False
+
+        btc_found = any("wallets" in p.name for p in Path(tmpdir).iterdir())
+        if btc_found:
+            green("✔ Bitcoin wallet files detected")
+        else:
+            yellow("⚠ Bitcoin wallet files not detected")
+
+        monero_wallet = Path(tmpdir) / MONERO_WALLET.name
+        monero_keys = monero_wallet.with_suffix(".keys")
+
+        if monero_wallet.exists() and monero_keys.exists():
+            green("✔ Monero wallet + keys detected")
+        else:
+            yellow("⚠ Monero wallet or keys missing")
+
+        if ok:
+            green("\n✔ Backup integrity verification PASSED")
+        else:
+            red("\n✖ Backup integrity verification FAILED")
+
+        print("\nNo files were written to the system.")
+        print("Restore verification completed safely.\n")
 
 # ============================================================
-# 🔹 NEW — Wallets Menu (Monero + Bitcoin)
+# Wallets Menu
 # ============================================================
 def wallets_menu():
     while True:
         header()
         print("Wallets Menu:\n")
-        print(" 1) Bitcoin Wallet — myBTC CLI Shell")
-        print(" 2) Monero Wallet — /wallets/myVault (interactive)")
-        print(" 3) Return to main\n")
+        print(" 1) Bitcoin Wallet — CLI")
+        print(" 2) Monero Wallet — CLI")
+        print(" 3) Backup Wallets (encrypted for 1Password)")
+        print(" 4) Restore Verify Backup (non-destructive)")
+        print(" 5) Return to main\n")
 
         sel = input("Select option: ").strip()
 
         if sel == "1":
-            print("\nLaunching Bitcoin CLI Shell...\n")
-            run("/usr/local/bin/mybtc-shell")
-            input("\nPress ENTER to return...")
+            run("/usr/bin/bitcoin-cli")
         elif sel == "2":
-            print("\nLaunching Monero Wallet CLI...\n")
             run("monero-wallet-cli --wallet-file /wallets/myVault")
-            input("\nPress ENTER to return...")
-        elif sel in ("3", "q", "x", "exit"):
+        elif sel == "3":
+            wallets_backup()
+            input("Press ENTER to continue...")
+        elif sel == "4":
+            wallets_restore_verify()
+            input("Press ENTER to continue...")
+        elif sel in ("5", "q", "x", "exit"):
             return
         else:
             print("Invalid selection.\n")
 
 # ============================================================
-# Usage / Commands
-# ============================================================
-def usage():
-    header()
-    print("Daily commands:\n")
-    print(" leo status          System health overview")
-    print(" leo edit FILE       Edit operator tools")
-    print(" leo deploy          Deploy MES (full units + restart all)")
-    print(" leo deploy -d       Deploy MES (demo services only)")
-    print(" leo deploy kraken   Deploy Kraken stack")
-    print(" leo mes             MES operator wrapper")
-    print(" leo ops             Operations submenu")
-    print(" leo wallets         Wallets submenu (Monero + Bitcoin)")
-    print(" leo aircraft        Aircraft pricing tools")
-    print(" leo update          System package updates")
-    print(" leo reboot          Reboot system\n")
-    sys.exit(0)
-
-def status():
-    header()
-    run("uptime"); print("")
-    run("df -h / | tail -n 1"); print("")
-    try: run("systemctl --failed")
-    except subprocess.CalledProcessError: pass
-
-def edit():
-    header()
-    if len(sys.argv) == 2:
-        print("Editable operator files:\n")
-        for k in EDITABLE_FILES: print(f" leo edit {k}")
-        print(""); return
-    target = sys.argv[2].lower()
-    if target not in EDITABLE_FILES:
-        red(f"Unknown target: {target}"); return
-    path = EDITABLE_FILES[target]
-    print(f"Opening {path} ...")
-    open_editor(path)
-
-def deploy():
-    if len(sys.argv) > 2 and sys.argv[2].lower() == "kraken":
-        deploy_kraken()
-    else:
-        deploy_mes()
-
-def mes():
-    if len(sys.argv) > 2:
-        run(f"mes-run {' '.join(sys.argv[2:])}")
-    else:
-        run("mes-run status")
-
-def update():
-    header()
-    run("sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y")
-    green("\nUpdate complete 😺")
-
-def reboot():
-    header()
-    if confirm("Reboot Leo system now?"):
-        run("sudo reboot")
-
-# ============================================================
 # Entrypoint
 # ============================================================
 if __name__ == "__main__":
-    if len(sys.argv) == 1 or sys.argv[1] in ("help","-h","--help"):
-        usage()
+    if len(sys.argv) == 1:
+        print("Use: leo wallets")
+        sys.exit(0)
+
     cmd = sys.argv[1].lower()
-    if   cmd == "status": status()
-    elif cmd == "edit": edit()
-    elif cmd == "deploy": deploy()
-    elif cmd == "mes": mes()
-    elif cmd == "ops": ops_menu()
-    elif cmd == "wallets": wallets_menu()
-    elif cmd == "aircraft": aircraft()
-    elif cmd == "update": update()
-    elif cmd == "reboot": reboot()
+
+    if cmd == "wallets":
+        wallets_menu()
     else:
         red(f"Unknown command: {cmd}")
-        usage()

@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 # ============================================================
-# File: kraken_btc.py
-# Version: v2.7 — Balance Summary + Swing-Low PnL + Sell-Approach (BTC/USD)
+# File: kraken_sol.py
+# Version: v2.7 — Balance Summary + Swing-Low PnL + Sell-Approach (SOL/USD)
 #
-# v2.7 changes:
-#   • Heartbeat always sends (even if usd_slice=0)
-#   • Balance summary + position value + unrealized PnL every heartbeat
-#   • PnL anchor = last_swing_low while holding (Option B)
-#   • SELL-APPROACH Telegram alert (one-time per leg) at +4%
-#   • Asset-in-hand detection: if BTC balance > 0 and mode=idle → hold
-#
-# Mode: LIVE — MARKET BUY/SELL (signals-free execution)
-# Slice Model:
-#   • BUY spends only from btc.usd_slice
-#   • SELL credits proceeds back to btc.usd_slice
+# Notes:
+#   • SOL balance key may be "SOL" or "XSOL" → we check both
+#   • Safe to run with 0 SOL (staging until you transfer from staking)
 # ============================================================
 
 import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
 
-# ------------------------------------------------------------
-# Environment
-# ------------------------------------------------------------
 API_KEY_PUBLIC  = os.getenv("KRAKEN_API_KEY")
 API_KEY_PRIVATE = os.getenv("KRAKEN_PRV_KEY")
 TG_TOKEN = os.getenv("KRAKEN_TOKEN")
@@ -32,22 +21,16 @@ if not all([API_KEY_PUBLIC, API_KEY_PRIVATE, TG_TOKEN, TG_CHAT]):
     print("[FATAL] Missing required environment variables.")
     sys.exit(1)
 
-BTC_USD_SLICE_INIT = os.getenv("BTC_USD_SLICE_INIT")
+SOL_USD_SLICE_INIT = os.getenv("SOL_USD_SLICE_INIT")
 
-# ------------------------------------------------------------
-# Trading Constants
-# ------------------------------------------------------------
-PAIR = "XBTUSD"
+PAIR = "SOLUSD"
 MIN_USD_BALANCE = 10.0
 SELL_FRACTION   = 0.25
 DRY_RUN         = False
 
-STATE_FILE = Path("kraken_state_btc.json")
-LOG_FILE   = Path("kraken_events_btc.jsonl")
+STATE_FILE = Path("kraken_state_sol.json")
+LOG_FILE   = Path("kraken_events_sol.jsonl")
 
-# ------------------------------------------------------------
-# Utilities / Logging / Telegram
-# ------------------------------------------------------------
 def log_event(ev: dict):
     try:
         ev = dict(ev)
@@ -69,9 +52,6 @@ def tg_send(msg: str):
     except Exception as e:
         print(f"[WARN] Telegram send failed: {e}")
 
-# ------------------------------------------------------------
-# Kraken API
-# ------------------------------------------------------------
 API_BASE = "https://api.kraken.com"
 
 def k_public(path: str):
@@ -92,41 +72,30 @@ def k_private(path: str, params: str):
     req = urllib.request.Request(f"{API_BASE}{path}", post.encode())
     req.add_header("API-Key", API_KEY_PUBLIC)
     req.add_header("API-Sign", signature)
-    req.add_header("User-Agent", "Kraken-MES-btc-v2.7")
+    req.add_header("User-Agent", "Kraken-MES-sol-v2.7")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
 
 def place_market_order(side: str, volume: float):
     volume_str = f"{volume:.8f}"
-
     if DRY_RUN:
-        log_event({
-            "event_type": "dry_run_order",
-            "engine_version": "v2.7",
-            "side": side,
-            "pair": PAIR,
-            "volume": volume_str,
-        })
+        log_event({"event_type":"dry_run_order","engine_version":"v2.7","side":side,"pair":PAIR,"volume":volume_str})
         print(f"[DRY-RUN] Would place {side} {PAIR} {volume_str}")
-        return {"result": "dry_run"}
-
+        return {"result":"dry_run"}
     params = f"pair={PAIR}&type={side}&ordertype=market&volume={volume_str}"
     res = k_private("/0/private/AddOrder", params)
     if res.get("error"):
         raise RuntimeError(res["error"])
     return res
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
 def pct(a, b):
     return ((b - a) / a) * 100.0 if a else 0.0
 
 def fmt_usd(x): return f"${x:,.2f}"
 def fmt_pct(x): return f"{x:+.2f}%"
 
-def btc_price_and_change():
-    data = k_public("/0/public/Ticker?pair=XBTUSD")
+def sol_price_and_change():
+    data = k_public("/0/public/Ticker?pair=SOLUSD")
     k = list(data["result"].keys())[0]
     last = float(data["result"][k]["c"][0])
     open_24h = float(data["result"][k]["o"])
@@ -136,21 +105,18 @@ def get_kraken_balances():
     res = k_private("/0/private/Balance", "")
     if res.get("error"):
         raise RuntimeError(res["error"])
-    return (
-        float(res["result"].get("XXBT", 0.0)),
-        float(res["result"].get("ZUSD", 0.0)),
-    )
+    r = res["result"]
+    sol_bal = float(r.get("SOL", 0.0)) + float(r.get("XSOL", 0.0))
+    usd_bal = float(r.get("ZUSD", 0.0))
+    return sol_bal, usd_bal
 
-# ------------------------------------------------------------
-# State
-# ------------------------------------------------------------
 DEFAULT_STATE = {
     "mode": "idle",
     "entry_price": None,
     "last_swing_high": None,
-    "last_swing_low": None,        # <-- PnL anchor in HOLD
+    "last_swing_low": None,
     "buy_approach_sent": False,
-    "sell_approach_sent": False,   # <-- alert gating
+    "sell_approach_sent": False,
     "entry_time": None,
     "usd_slice": None,
     "last_heartbeat": None,
@@ -161,35 +127,25 @@ def load_state():
         s = json.loads(STATE_FILE.read_text())
     else:
         s = {}
-
     base = DEFAULT_STATE.copy()
     base.update(s)
-
     if base["usd_slice"] is None:
         try:
-            base["usd_slice"] = float(BTC_USD_SLICE_INIT or 0.0)
+            base["usd_slice"] = float(SOL_USD_SLICE_INIT or 0.0)
         except:
             base["usd_slice"] = 0.0
-
     return base
 
 def save_state(s):
     STATE_FILE.write_text(json.dumps(s, indent=2))
 
-# ------------------------------------------------------------
-# Thresholds
-# ------------------------------------------------------------
 BUY_PULLBACK   = -3.0
 BUY_APPROACH   = -2.5
 SELL_TARGET    =  5.0
 SELL_APPROACH  =  4.0
 DRAWDOWN_RESET = -12.0
-
 HEARTBEAT_INTERVAL_HOURS = 4
 
-# ------------------------------------------------------------
-# Asset-in-hand + swing tracking
-# ------------------------------------------------------------
 def ensure_hold_if_asset_present(state, bal, price):
     if bal > 0 and state["mode"] == "idle":
         state["mode"] = "hold"
@@ -210,24 +166,21 @@ def update_swing_extremes(state, price):
     if state["mode"] == "hold" and price < state["last_swing_low"]:
         state["last_swing_low"] = price
 
-# ------------------------------------------------------------
-# Heartbeat
-# ------------------------------------------------------------
-def maybe_send_heartbeat(state, price, btc_bal, usd_bal):
+def maybe_send_heartbeat(state, price, sol_bal, usd_bal):
     now = time.time()
     last = state.get("last_heartbeat") or 0
     if now - last < HEARTBEAT_INTERVAL_HOURS * 3600:
         return
 
-    pos_value = btc_bal * price
+    pos_value = sol_bal * price
     anchor = state.get("last_swing_low") or price
     pnl_pct = pct(anchor, price)
-    pnl_usd = (price - anchor) * btc_bal
+    pnl_usd = (price - anchor) * sol_bal
 
     tg_send(
-        "🔎 BTC Heartbeat — v2.7\n"
+        "🔎 SOL Heartbeat — v2.7\n"
         f"Mode: {state['mode']}\n"
-        f"BTC: {btc_bal:.8f}\n"
+        f"SOL: {sol_bal:.8f}\n"
         f"USD: {fmt_usd(usd_bal)}\n"
         f"Pos: {fmt_usd(pos_value)} @ {price:,.2f}\n"
         f"PnL (vs swing low {anchor:,.2f}): {fmt_usd(pnl_usd)} ({fmt_pct(pnl_pct)})\n"
@@ -237,20 +190,14 @@ def maybe_send_heartbeat(state, price, btc_bal, usd_bal):
 
     state["last_heartbeat"] = now
 
-# ------------------------------------------------------------
-# Trade Execution
-# ------------------------------------------------------------
 def execute_buy(price, state):
     _, usd_bal = get_kraken_balances()
     slice_before = float(state["usd_slice"])
     usd_avail = min(slice_before, usd_bal)
-
     if usd_avail < MIN_USD_BALANCE:
         return False
-
     usd_to_spend = usd_avail
     volume = round(usd_to_spend / price, 8)
-
     res = place_market_order("buy", volume)
 
     state["usd_slice"] = max(0.0, slice_before - usd_to_spend)
@@ -258,21 +205,19 @@ def execute_buy(price, state):
     state["entry_time"] = time.time()
     state["mode"] = "hold"
     state["sell_approach_sent"] = False
-
-    # reset swing-low anchor on new buys
     state["last_swing_low"] = price
 
     tg_send(
-        "🟢 BTC BUY EXECUTED\n"
+        "🟢 SOL BUY EXECUTED\n"
         f"Price: {price:,.2f}\n"
         f"USD Spent: {fmt_usd(usd_to_spend)}\n"
-        f"BTC Bought: {volume:.8f}\n"
+        f"SOL Bought: {volume:.8f}\n"
         f"USD Slice: {fmt_usd(slice_before)} → {fmt_usd(state['usd_slice'])}\n"
         "Engine v2.7"
     )
 
     log_event({
-        "event_type": "btc_buy",
+        "event_type": "sol_buy",
         "engine_version": "v2.7",
         "price": price,
         "volume": volume,
@@ -284,8 +229,8 @@ def execute_buy(price, state):
     return True
 
 def execute_sell(reason, price, state):
-    btc_bal, _ = get_kraken_balances()
-    volume = round(btc_bal * SELL_FRACTION, 8)
+    sol_bal, _ = get_kraken_balances()
+    volume = round(sol_bal * SELL_FRACTION, 8)
     notional = volume * price
     if notional < MIN_USD_BALANCE:
         return False
@@ -298,7 +243,7 @@ def execute_sell(reason, price, state):
     state["sell_approach_sent"] = False
 
     tg_send(
-        f"🔵 BTC SELL ({reason})\n"
+        f"🔵 SOL SELL ({reason})\n"
         f"Price: {price:,.2f}\n"
         f"Sold: {volume:.8f}\n"
         f"Credited: {fmt_usd(notional)}\n"
@@ -307,7 +252,7 @@ def execute_sell(reason, price, state):
     )
 
     log_event({
-        "event_type": f"btc_sell_{reason}",
+        "event_type": f"sol_sell_{reason}",
         "engine_version": "v2.7",
         "price": price,
         "volume": volume,
@@ -318,17 +263,14 @@ def execute_sell(reason, price, state):
     })
     return True
 
-# ------------------------------------------------------------
-# Engine Tick
-# ------------------------------------------------------------
 def engine_tick():
     s = load_state()
-    price, _ = btc_price_and_change()
-    btc_bal, usd_bal = get_kraken_balances()
+    price, _ = sol_price_and_change()
+    sol_bal, usd_bal = get_kraken_balances()
 
-    ensure_hold_if_asset_present(s, btc_bal, price)
+    ensure_hold_if_asset_present(s, sol_bal, price)
     update_swing_extremes(s, price)
-    maybe_send_heartbeat(s, price, btc_bal, usd_bal)
+    maybe_send_heartbeat(s, price, sol_bal, usd_bal)
 
     pullback = pct(s["last_swing_high"], price)
 
@@ -345,7 +287,7 @@ def engine_tick():
         if (not s.get("sell_approach_sent")) and gain >= SELL_APPROACH and gain < SELL_TARGET:
             s["sell_approach_sent"] = True
             tg_send(
-                "⚠️ BTC SELL APPROACH — v2.7\n"
+                "⚠️ SOL SELL APPROACH — v2.7\n"
                 f"Gain (vs swing low {anchor:,.2f}): {gain:+.2f}%\n"
                 f"Price: {price:,.2f}\n"
                 f"Target: {SELL_TARGET:.1f}%"
@@ -363,14 +305,11 @@ def engine_tick():
 
     save_state(s)
 
-# ------------------------------------------------------------
-# Main
-# ------------------------------------------------------------
 if __name__ == "__main__":
     try:
-        print("Kraken BTC Trader v2.7 tick OK")
+        print("Kraken SOL Trader v2.7 tick OK")
         engine_tick()
     except Exception as e:
-        tg_send(f"❌ Kraken BTC v2.7 runtime error:\n{e}")
+        tg_send(f"❌ Kraken SOL v2.7 runtime error:\n{e}")
         print(f"[FATAL] {e}")
         sys.exit(1)

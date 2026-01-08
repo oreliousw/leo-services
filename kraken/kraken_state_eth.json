@@ -2,9 +2,10 @@
   "mode": "idle",
   "entry_price": null,
   "last_swing_high": 3162.87,
-  "buy_approach_sent": false,
+  "last_swing_low": 3089.03,
+  "buy_approach_sent": true,
   "sell_approach_sent": false,
   "entry_time": null,
   "usd_slice": 0.0,
-  "last_heartbeat": 1767857416.677653
+  "last_heartbeat": 1767886601.2986324
 }
