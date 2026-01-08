@@ -1,245 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-# Project: Leo Services
-# File: leo
-# Version: v1.9.21 — 2026-01-07
-#
-# Change:
-#   • Added Wallet Backup + Restore Verify subsystem
-#       - leo wallets backup
-#       - leo wallets restore --verify
-#
-#   • Backups are encrypted for 1Password attachment
-#   • Restore verify is NON-DESTRUCTIVE by default
-#
 Leo System Command – leo
 ================================================
 Primary operator interface for Leo Services
+
+MODULAR DISPATCHER VERSION
 """
 import sys
-import subprocess
-from datetime import datetime, date
-from shutil import which
-from pathlib import Path
-import json
-import tarfile
-import tempfile
-import secrets
-import shutil
-import os
+from core import red
 
-# ============================================================
-# Paths
-# ============================================================
-HOME = Path.home()
-LEO_BASE = HOME / "leo-services"
-
-BITCOIN_DIR = HOME / ".bitcoin"
-MONERO_WALLET = Path("/wallets/myVault")
-
-# ============================================================
-# Helpers
-# ============================================================
-def run(cmd: str, capture=False, check=True):
-    if capture:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        return result.returncode == 0, result.stdout + result.stderr
-    else:
-        subprocess.run(cmd, shell=True, check=check)
-
-def red(t): print(f"\033[91m{t}\033[0m")
-def green(t): print(f"\033[92m{t}\033[0m")
-def yellow(t): print(f"\033[93m{t}\033[0m")
-
-def header():
-    print("\n=== LEO SYSTEM ===")
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-def confirm(prompt: str) -> bool:
-    r = input(f"{prompt} (y/n): ").lower().strip()
-    return r in ("y", "yes")
-
-# ============================================================
-# Wallet Backup
-# ============================================================
-def wallets_backup():
-    header()
-    print("LEO ▸ WALLETS BACKUP\n")
-
-    backup_items = []
-
-    # Bitcoin
-    btc_wallets = BITCOIN_DIR / "wallets"
-    if btc_wallets.exists():
-        backup_items.append(btc_wallets)
-        green(f"✔ Bitcoin wallets: {btc_wallets}")
-    else:
-        yellow("⚠ Bitcoin wallets not found")
-
-    # Monero
-    if MONERO_WALLET.exists():
-        backup_items.append(MONERO_WALLET)
-        key_file = MONERO_WALLET.with_suffix(".keys")
-        if key_file.exists():
-            backup_items.append(key_file)
-        green(f"✔ Monero wallet: {MONERO_WALLET}")
-    else:
-        yellow("⚠ Monero wallet not found")
-
-    if not backup_items:
-        red("✖ No wallets found to back up")
+def main():
+    if len(sys.argv) < 2:
+        print("Use: leo <command>")
+        print("Available: kraken | wallets | mes | mining | ops | aircraft")
         return
 
-    if not confirm("Create encrypted wallet backup archive?"):
-        return
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
 
-    pw = input("Enter encryption passphrase (ENTER = auto-generate): ").strip()
-    if not pw:
-        pw = secrets.token_urlsafe(32)
-        yellow("\nGenerated passphrase (store in 1Password):")
-        print(pw + "\n")
+    if cmd == "kraken":
+        import kraken
+        kraken.handle(args)
 
-    today = date.today().isoformat()
-    tar_name = f"leo-wallet-backup-{today}.tar.gz"
-    enc_name = tar_name + ".enc"
+    elif cmd == "wallets":
+        import wallets
+        wallets.handle(args)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tar_path = Path(tmpdir) / tar_name
+    elif cmd == "mes":
+        import mes
+        mes.handle(args)
 
-        with tarfile.open(tar_path, "w:gz") as tar:
-            for item in backup_items:
-                tar.add(item, arcname=item.name)
+    elif cmd == "mining":
+        import mining
+        mining.handle(args)
 
-            meta = Path(tmpdir) / "RESTORE_INFO.txt"
-            meta.write_text(
-                f"Backup date: {today}\n"
-                f"Bitcoin dir: {btc_wallets if btc_wallets.exists() else 'N/A'}\n"
-                f"Monero wallet: {MONERO_WALLET if MONERO_WALLET.exists() else 'N/A'}\n"
-            )
-            tar.add(meta, arcname="RESTORE_INFO.txt")
+    elif cmd == "ops":
+        import ops
+        ops.handle(args)
 
-        run(
-            f"openssl enc -aes-256-cbc -pbkdf2 -salt "
-            f"-in {tar_path} -out {enc_name} "
-            f"-pass pass:{pw}"
-        )
+    elif cmd == "aircraft":
+        import aircraft
+        aircraft.handle(args)
 
-    green(f"\n✔ Encrypted backup created: {enc_name}")
-    print("\n→ Attach this file to 1Password")
-    print("→ Store the passphrase in the same vault item\n")
-
-# ============================================================
-# Wallet Restore Verify (NON-DESTRUCTIVE)
-# ============================================================
-def wallets_restore_verify():
-    header()
-    print("LEO ▸ WALLETS RESTORE VERIFY\n")
-
-    enc_file = input("Path to encrypted backup (.tar.gz.enc): ").strip()
-    enc_path = Path(enc_file)
-
-    if not enc_path.exists():
-        red("✖ Backup file not found")
-        return
-
-    pw = input("Enter backup passphrase: ").strip()
-    if not pw:
-        red("✖ Passphrase required")
-        return
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tar_path = Path(tmpdir) / "restore.tar.gz"
-
-        # Decrypt
-        try:
-            run(
-                f"openssl enc -d -aes-256-cbc -pbkdf2 "
-                f"-in {enc_path} -out {tar_path} "
-                f"-pass pass:{pw}"
-            )
-        except subprocess.CalledProcessError:
-            red("✖ Decryption failed (wrong passphrase or corrupt file)")
-            return
-
-        # Extract
-        try:
-            with tarfile.open(tar_path, "r:gz") as tar:
-                tar.extractall(tmpdir)
-        except Exception as e:
-            red(f"✖ Extraction failed: {e}")
-            return
-
-        # Verification checks
-        ok = True
-
-        if not (Path(tmpdir) / "RESTORE_INFO.txt").exists():
-            red("✖ Missing RESTORE_INFO.txt")
-            ok = False
-
-        btc_found = any("wallets" in p.name for p in Path(tmpdir).iterdir())
-        if btc_found:
-            green("✔ Bitcoin wallet files detected")
-        else:
-            yellow("⚠ Bitcoin wallet files not detected")
-
-        monero_wallet = Path(tmpdir) / MONERO_WALLET.name
-        monero_keys = monero_wallet.with_suffix(".keys")
-
-        if monero_wallet.exists() and monero_keys.exists():
-            green("✔ Monero wallet + keys detected")
-        else:
-            yellow("⚠ Monero wallet or keys missing")
-
-        if ok:
-            green("\n✔ Backup integrity verification PASSED")
-        else:
-            red("\n✖ Backup integrity verification FAILED")
-
-        print("\nNo files were written to the system.")
-        print("Restore verification completed safely.\n")
-
-# ============================================================
-# Wallets Menu
-# ============================================================
-def wallets_menu():
-    while True:
-        header()
-        print("Wallets Menu:\n")
-        print(" 1) Bitcoin Wallet — CLI")
-        print(" 2) Monero Wallet — CLI")
-        print(" 3) Backup Wallets (encrypted for 1Password)")
-        print(" 4) Restore Verify Backup (non-destructive)")
-        print(" 5) Return to main\n")
-
-        sel = input("Select option: ").strip()
-
-        if sel == "1":
-            run("/usr/bin/bitcoin-cli")
-        elif sel == "2":
-            run("monero-wallet-cli --wallet-file /wallets/myVault")
-        elif sel == "3":
-            wallets_backup()
-            input("Press ENTER to continue...")
-        elif sel == "4":
-            wallets_restore_verify()
-            input("Press ENTER to continue...")
-        elif sel in ("5", "q", "x", "exit"):
-            return
-        else:
-            print("Invalid selection.\n")
-
-# ============================================================
-# Entrypoint
-# ============================================================
-if __name__ == "__main__":
-    if len(sys.argv) == 1:
-        print("Use: leo wallets")
-        sys.exit(0)
-
-    cmd = sys.argv[1].lower()
-
-    if cmd == "wallets":
-        wallets_menu()
     else:
         red(f"Unknown command: {cmd}")
+
+if __name__ == "__main__":
+    main()

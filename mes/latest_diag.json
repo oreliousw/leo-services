@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-01-07T17:57:30.005291+00:00",
-  "version": "MES v3.5.96 LIVE",
-  "mode": "LIVE",
+  "generated_at": "2026-01-08T18:55:10.927549+00:00",
+  "version": "MES Scalp v3.5.96 DEMO",
+  "mode": "DEMO",
   "pairs": {
     "EUR_USD": {
       "pair": "EUR_USD",
-      "time": "2026-01-07T17:57:25.308843+00:00",
+      "time": "2026-01-08T18:55:10.927491+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF structure misaligned"
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -25,31 +25,11 @@
     },
     "GBP_USD": {
       "pair": "GBP_USD",
-      "time": "2026-01-07T17:57:25.820037+00:00",
-      "decision": "SELL",
-      "direction": "bearish",
-      "reasons": [
-        "pro_continuation_scalp"
-      ],
-      "entry_type": "pro_continuation_scalp",
-      "trade_class": "SCALP",
-      "tp_pips": 3.5,
-      "sl_pips": 2.9999999999996696,
-      "risk_units": 3356,
-      "exec_units": 3356,
-      "was_margin_capped": false,
-      "risk_pct_used": 0.008,
-      "strong_body_ratio": 1.284,
-      "pullback_pips": 1.5,
-      "in_alignment": true
-    },
-    "AUD_USD": {
-      "pair": "AUD_USD",
-      "time": "2026-01-07T17:57:26.897348+00:00",
+      "time": "2026-01-08T18:55:10.927523+00:00",
       "decision": "SKIPPED",
-      "direction": "bullish",
+      "direction": "NONE",
       "reasons": [
-        "Closed due to alignment break"
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -61,15 +41,35 @@
       "risk_pct_used": 0.0,
       "strong_body_ratio": 0.0,
       "pullback_pips": 0.0,
-      "in_alignment": false
+      "in_alignment": true
     },
-    "NZD_USD": {
-      "pair": "NZD_USD",
-      "time": "2026-01-07T17:57:27.608729+00:00",
+    "AUD_USD": {
+      "pair": "AUD_USD",
+      "time": "2026-01-08T18:55:10.927529+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF structure misaligned"
+        "Outside high-quality session"
+      ],
+      "entry_type": "",
+      "trade_class": "SCALP",
+      "tp_pips": 0.0,
+      "sl_pips": 0.0,
+      "risk_units": 0,
+      "exec_units": 0,
+      "was_margin_capped": false,
+      "risk_pct_used": 0.0,
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
+    },
+    "NZD_USD": {
+      "pair": "NZD_USD",
+      "time": "2026-01-08T18:55:10.927533+00:00",
+      "decision": "SKIPPED",
+      "direction": "NONE",
+      "reasons": [
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -85,11 +85,11 @@
     },
     "USD_CAD": {
       "pair": "USD_CAD",
-      "time": "2026-01-07T17:57:28.134799+00:00",
+      "time": "2026-01-08T18:55:10.927537+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF structure misaligned"
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -105,11 +105,11 @@
     },
     "USD_CHF": {
       "pair": "USD_CHF",
-      "time": "2026-01-07T17:57:28.635806+00:00",
+      "time": "2026-01-08T18:55:10.927541+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF structure misaligned"
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -125,12 +125,11 @@
     },
     "EUR_GBP": {
       "pair": "EUR_GBP",
-      "time": "2026-01-07T17:57:29.216277+00:00",
+      "time": "2026-01-08T18:55:10.927545+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Init",
-        "No strong M1 candle in direction"
+        "Outside high-quality session"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
