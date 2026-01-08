@@ -51,3 +51,26 @@
 [2026-01-05 08:45:12,628] INFO: [MES] MES v3.5.95 LIVE starting cycle
 [2026-01-05 08:50:49,014] INFO: [MES] MES v3.5.95 DEMO starting cycle
 [2026-01-05 08:50:57,530] INFO: [MES] MES v3.5.95 LIVE starting cycle
+[2026-01-07 08:04:34,674] INFO: [MES] MES v3.5.96 DEMO starting cycle
+[2026-01-07 08:04:37,680] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 08:04:39,572] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 08:04:43,717] INFO: [MES] MES v3.5.96 LIVE starting cycle
+[2026-01-07 08:45:25,072] INFO: [MES] MES v3.5.97 DEMO starting cycle
+[2026-01-07 08:45:42,445] INFO: [MES] MES v3.5.97 LIVE starting cycle
+[2026-01-07 09:08:51,976] INFO: [MES] MES v3.5.96 DEMO starting cycle
+[2026-01-07 09:08:55,265] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:08:55,848] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:08:58,269] INFO: [MES] Placing LIMIT BUY EUR_GBP 559595 @ 0.86763 SL=0.86745 TP=0.86798
+[2026-01-07 09:08:58,440] INFO: [MES] OANDA_FILL_RAW: {"orderCreateTransaction": {"id": "9504", "accountID": "101-001-30887082-001", "userID": 30887082, "batchID": "9504", "requestID": "79472308717187592", "time": "2026-01-07T17:08:58.315814880Z", "type": "LIMIT_ORDER", "instrument": "EUR_GBP", "units": "559595", "price": "0.86763", "timeInForce": "GTC", "triggerCondition": "DEFAULT", "partialFill": "DEFAULT", "positionFill": "DEFAULT", "takeProfitOnFill": {"price": "0.86798", "timeInForce": "GTC"}, "stopLossOnFill": {"price": "0.86745", "timeInForce": "GTC", "triggerMode": "TOP_OF_BOOK"}, "reason": "CLIENT_ORDER", "clientExtensions": {"tag": "MESv3.5.96_proContinuation"}}, "relatedTransactionIDs": ["9504"], "lastTransactionID": "9504"}
+[2026-01-07 09:09:01,374] INFO: [MES] MES v3.5.96 LIVE starting cycle
+[2026-01-07 09:09:03,011] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:09:03,654] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:09:06,019] INFO: [MES] Placing LIMIT BUY EUR_GBP 3641 @ 0.86769 SL=0.86745 TP=0.86804
+[2026-01-07 09:09:06,134] INFO: [MES] OANDA_FILL_RAW: {"orderCreateTransaction": {"id": "12953", "accountID": "001-001-13273779-001", "userID": 13273779, "batchID": "12953", "requestID": "133515504279263300", "time": "2026-01-07T17:09:06.074703448Z", "type": "LIMIT_ORDER", "instrument": "EUR_GBP", "units": "3641", "price": "0.86769", "timeInForce": "GTC", "triggerCondition": "DEFAULT", "partialFill": "DEFAULT", "positionFill": "DEFAULT", "takeProfitOnFill": {"price": "0.86804", "timeInForce": "GTC"}, "stopLossOnFill": {"price": "0.86745", "timeInForce": "GTC", "triggerMode": "TOP_OF_BOOK"}, "reason": "CLIENT_ORDER", "clientExtensions": {"tag": "MESv3.5.96_proContinuation"}}, "relatedTransactionIDs": ["12953"], "lastTransactionID": "12953"}
+[2026-01-07 09:57:15,700] INFO: [MES] MES v3.5.96 DEMO starting cycle
+[2026-01-07 09:57:18,914] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:57:19,601] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}
+[2026-01-07 09:57:24,932] INFO: [MES] MES v3.5.96 LIVE starting cycle
+[2026-01-07 09:57:26,785] INFO: [MES] Placing LIMIT SELL GBP_USD 3356 @ 1.3472700000000002 SL=1.34757 TP=1.34692
+[2026-01-07 09:57:26,896] INFO: [MES] OANDA_FILL_RAW: {"orderCreateTransaction": {"id": "12959", "accountID": "001-001-13273779-001", "userID": 13273779, "batchID": "12959", "requestID": "97486719425585957", "time": "2026-01-07T17:57:26.844566135Z", "type": "LIMIT_ORDER", "instrument": "GBP_USD", "units": "-3356", "price": "1.34727", "timeInForce": "GTC", "triggerCondition": "DEFAULT", "partialFill": "DEFAULT", "positionFill": "DEFAULT", "takeProfitOnFill": {"price": "1.34692", "timeInForce": "GTC"}, "stopLossOnFill": {"price": "1.34757", "timeInForce": "GTC", "triggerMode": "TOP_OF_BOOK"}, "reason": "CLIENT_ORDER", "clientExtensions": {"tag": "MESv3.5.96_proContinuation"}}, "relatedTransactionIDs": ["12959"], "lastTransactionID": "12959"}
+[2026-01-07 09:57:27,608] INFO: [MES] OANDA_CLOSE_RAW: {"errorMessage": "HTTP method 'POST' not allowed for this endpoint."}

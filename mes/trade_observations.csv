@@ -1,3 +1,6 @@
 timestamp_utc,pair,direction,sweep_type,confirmation_type,retest_distance_pips,zone_radius_pips,in_zone_ratio,tp_pips,sl_pips,exec_units,was_margin_capped,session_hour_utc
 2026-01-05T14:29:03.302742+00:00,EUR_USD,bearish,high_sweep,wick_reject,1.2,3.17,0.379,7.03,3.7,456197,True,14
 2026-01-05T14:29:12.261491+00:00,EUR_USD,bearish,high_sweep,wick_reject,1.2,3.17,0.379,7.03,3.7,2787,False,14
+2026-01-07T17:08:57.352121+00:00,EUR_GBP,bullish,2.688,1.5,1.8,3.5,559595,True,17
+2026-01-07T17:09:05.139585+00:00,EUR_GBP,bullish,0.683,1.5,2.4,3.5,3641,False,17
+2026-01-07T17:57:25.820037+00:00,GBP_USD,bearish,1.284,1.5,3.0,3.5,3356,False,17

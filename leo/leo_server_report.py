@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 # ------------------------------------------------------------
-# Leo Server Report — v1.1.6 (2025-12-28)
+# Leo Server Report — v1.2.0 (2026-01-06)
 # Purpose: Hourly Telegram health snapshot for Leo server
-# Changes:
-# - Added Hostname + Kernel identity line under report header
-# - Keeps compact aviation-style briefing format
-# - No functional behavior changes
+#
+# Changes (v1.2.0):
+# • Added Bitcoin Services block
+# • bitcoind service status
+# • Sync telemetry from bitcoin-cli (IBD, blocks, headers)
+# • Safe fallback if bitcoin-cli not installed or node offline
 # ------------------------------------------------------------
 
 import os
 import socket
 import platform
 import subprocess
+import json
 from datetime import datetime, timedelta
 
 import psutil
@@ -76,6 +79,32 @@ def get_recent_errors() -> str:
     return output if output else "None"
 
 
+# ---------- Bitcoin sync telemetry ----------
+def get_bitcoin_status() -> tuple[str, str, str, str]:
+    """
+    Returns:
+        service status, IBD state, block height, header height
+        Falls back to N/A if bitcoin-cli unavailable
+    """
+    status = service_status("bitcoind.service")
+
+    ibd = "N/A"
+    blocks = "N/A"
+    headers = "N/A"
+
+    try:
+        result = run_cmd(["bitcoin-cli", "getblockchaininfo"])
+        if result and result not in ("Error", "Failed"):
+            info = json.loads(result)
+            ibd = "True" if info.get("initialblockdownload", False) else "False"
+            blocks = str(info.get("blocks", 0))
+            headers = str(info.get("headers", 0))
+    except Exception:
+        pass
+
+    return status, ibd, blocks, headers
+
+
 # ---------- MAIN ----------
 try:
     cpu_pct = psutil.cpu_percent(interval=1)
@@ -85,6 +114,8 @@ try:
     monerod_status = service_status("monerod.service")
     p2pool_status = service_status("p2pool.service")
     xmrig_status = service_status("xmrig.service")
+
+    bitcoind_status, btc_ibd, btc_blocks, btc_headers = get_bitcoin_status()
 
     errors = get_recent_errors()
 
@@ -103,6 +134,11 @@ try:
         f"monerod: {monerod_status}\n"
         f"p2pool: {p2pool_status}\n"
         f"xmrig: {xmrig_status}\n\n"
+        "<b>₿ Bitcoin Services</b>\n"
+        f"bitcoind: {bitcoind_status}\n"
+        f"IBD: {btc_ibd}\n"
+        f"Blocks: {btc_blocks}\n"
+        f"Headers: {btc_headers}\n\n"
         "<b>⚠️ Recent Errors (last hour)</b>\n"
         f"{errors}\n\n"
         "All good 😺"

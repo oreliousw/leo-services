@@ -1,0 +1,1 @@
+{"event_type": "btc_buy", "engine_version": "v2.6", "price": 91507.0, "volume": 0.0002732, "usd_spent": 25.0, "slice_before": 25.0, "slice_after": 0.0, "response": {"error": [], "result": {"txid": ["ODPDEJ-7D4QR-PE5JUK"], "descr": {"order": "buy 0.00027 XBTUSD @ market"}}}, "timestamp_utc": "2026-01-07T14:22:10.117045Z"}

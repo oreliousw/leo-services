@@ -202,9 +202,8 @@ def deploy_mes():
     header()
     demo_only = "-d" in sys.argv
     scope = "demo services only (live files updated but not restarted)" if demo_only else "ALL services"
-    yellow(f"Deploying latest MES code → {scope}...")  # updated message: no "+ units"
+    yellow(f"Deploying latest MES code → {scope}...")
 
-    # 1. Copy Python runtime files only (units are now symlinked)
     for src in [MES_SRC_DIR / "mes_scalp.py", MES_SRC_DIR / "mes_swing.py"]:
         if not src.exists():
             red(f"Missing source file: {src}")
@@ -214,9 +213,6 @@ def deploy_mes():
         run(f"sudo chmod 644 {dest}")
         green(f"✔ Copied {src.name} → {dest}")
 
-    # 2. Unit files are now symlinked - no copy needed
-
-    # 3. Reload systemd daemon
     print("\nReloading systemd daemon...")
     success, output = run("sudo systemctl daemon-reload", capture=True)
     if success:
@@ -226,7 +222,6 @@ def deploy_mes():
         print(output)
         return
 
-    # 4. Restart services based on scope
     all_svcs = [
         "mes_scalp_demo.service", "mes_scalp_live.service",
         "mes_swing_demo.service", "mes_swing_live.service",
@@ -261,6 +256,32 @@ def deploy_kraken():
         red("✖ Kraken deploy failed")
 
 # ============================================================
+# 🔹 NEW — Wallets Menu (Monero + Bitcoin)
+# ============================================================
+def wallets_menu():
+    while True:
+        header()
+        print("Wallets Menu:\n")
+        print(" 1) Bitcoin Wallet — myBTC CLI Shell")
+        print(" 2) Monero Wallet — /wallets/myVault (interactive)")
+        print(" 3) Return to main\n")
+
+        sel = input("Select option: ").strip()
+
+        if sel == "1":
+            print("\nLaunching Bitcoin CLI Shell...\n")
+            run("/usr/local/bin/mybtc-shell")
+            input("\nPress ENTER to return...")
+        elif sel == "2":
+            print("\nLaunching Monero Wallet CLI...\n")
+            run("monero-wallet-cli --wallet-file /wallets/myVault")
+            input("\nPress ENTER to return...")
+        elif sel in ("3", "q", "x", "exit"):
+            return
+        else:
+            print("Invalid selection.\n")
+
+# ============================================================
 # Usage / Commands
 # ============================================================
 def usage():
@@ -273,6 +294,7 @@ def usage():
     print(" leo deploy kraken   Deploy Kraken stack")
     print(" leo mes             MES operator wrapper")
     print(" leo ops             Operations submenu")
+    print(" leo wallets         Wallets submenu (Monero + Bitcoin)")
     print(" leo aircraft        Aircraft pricing tools")
     print(" leo update          System package updates")
     print(" leo reboot          Reboot system\n")
@@ -332,6 +354,7 @@ if __name__ == "__main__":
     elif cmd == "deploy": deploy()
     elif cmd == "mes": mes()
     elif cmd == "ops": ops_menu()
+    elif cmd == "wallets": wallets_menu()
     elif cmd == "aircraft": aircraft()
     elif cmd == "update": update()
     elif cmd == "reboot": reboot()

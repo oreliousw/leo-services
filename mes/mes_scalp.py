@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MES v3.5.95 — PRO Retest Scalp + AI Diagnostics + Clarified Monday Rule
+MES v3.5.96 — PRO Continuation Scalp + AI Diagnostics + Clarified Monday Rule
 -----------------------------------------------------------------------
-• Retest-only scalp entries (no fallback impulse scalps)
-• 15m bias + 5m sweep/retest + micro-structure confirmation
-• Stops anchored beyond swept high/low + ATR sanity cap
-• Fixed 1.9R TP based on actual SL distance
-• Correct HTF RSI alignment (1H vs 4H)
-• Corrected volume gating (NaN/zero safe)
-• ATR + M5 history safety guards
+• Continuation-only scalp entries (no reversals)
+• 4H + 1H structure alignment (HH/HL vs LH/LL)
+• M1 strong candle + limit order into 1.5 pip pullback
+• Stops beyond recent M1 swing + 5 pip cap
+• Fixed ~3.5 pip TP
+• Close open trades if HTF alignment breaks
+• Volume gating (NaN/zero safe)
+• ATR + M1 history safety guards
 • Demo margin-cap logic restored
 • Clear unit semantics (risk_units vs exec_units)
 • Session-window discipline (London–NY overlap)
-• Retest zone multiplier = 0.7×ATR (evaluation mode)
 • AI-ready CSV diagnostics (1 row per executed trade)
       → ~/leo-services/mes/trade_observations.csv
 • Repo-safe paths (everything inside mes/)
@@ -118,11 +118,6 @@ INSTRUMENTS = [
 
 CANDLE_COUNT = 300
 ATR_PERIOD = 14
-RSI_PERIOD = 14
-RSI_BUY_MIN = 55.0
-RSI_SELL_MAX = 45.0
-HTF_BUY_MIN = 60.0
-HTF_SELL_MAX = 40.0
 
 DEMO_SCALP_RISK_PCT = 0.020
 DEMO_MAX_SWING_MARGIN_FRACTION = 0.20
@@ -146,7 +141,7 @@ if not OANDA_API_TOKEN or not OANDA_ACCOUNT_ID or not OANDA_REST_URL:
 
 MODE = "DEMO" if "fxpractice" in OANDA_REST_URL else "LIVE"
 DEFAULT_RISK_PCT = DEMO_SCALP_RISK_PCT if MODE == "DEMO" else LIVE_SCALP_RISK_PCT
-VERSION = f"MES v3.5.95 {MODE}"
+VERSION = f"MES Scalp v3.5.96 {MODE}"
 
 # ============================================================
 # TELEGRAM
@@ -164,15 +159,14 @@ def telegram_send(msg: str):
         logging.error(f"[MES] Telegram error: {e}")
 
 # ============================================================
-# PRO RETEST CONFIG
+# CONTINUATION CONFIG
 # ============================================================
-USE_PRO_RETEST_ONLY = True
-MIN_RETTEST_LOOKBACK_BARS = 8
-RETTEST_ZONE_ATR_MULT = 0.7
-MIN_WICK_RATIO_CONFIRM = 0.45
-PRO_SL_ATR_CAP_MULT = 1.35
-PRO_TP_RR = 1.9
-BUFFER_PIPS = 2.5
+STRONG_CANDLE_ATR_MULT = 0.5
+PULLBACK_PIPS = 1.5
+BUFFER_PIPS = 0.5
+MAX_SL_PIPS = 5.0
+TP_PIPS = 3.5
+MIN_STRUCTURE_LOOKBACK_BARS = 2
 
 # ============================================================
 # SESSION DISCIPLINE (MONDAY INCLUDED)
@@ -208,13 +202,6 @@ def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
     pc = cl.shift(1)
     tr = pd.concat([(hi - lo), (hi - pc).abs(), (lo - pc).abs()], axis=1).max(axis=1)
     return tr.rolling(period).mean()
-
-def compute_rsi(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
-    d = series.diff()
-    gain = d.clip(lower=0)
-    loss = -d.clip(upper=0)
-    rs = gain.rolling(period).mean() / (loss.rolling(period).mean() + 1e-9)
-    return 100 - (100 / (1 + rs))
 
 # ============================================================
 # OANDA HELPERS
@@ -273,57 +260,32 @@ def oanda_get_open_positions() -> Dict[str, float]:
         for p in r.json().get("positions", [])
     }
 
-# ============================================================
-# RETEST HELPERS
-# ============================================================
-def find_last_sweep_level(df5: pd.DataFrame, direction: str, lookback: int = MIN_RETTEST_LOOKBACK_BARS):
-    if len(df5) < lookback + 4:
-        return None, "insufficient_data"
-    recent = df5.iloc[-lookback-4:-3]
-    if direction == "bullish":
-        idx = recent["low"].idxmin()
-        lvl = recent.loc[idx, "low"]
-        post = df5.loc[idx:].iloc[1:]
-        if len(post) < 2 or (post["close"] > lvl).sum() == 0:
-            return None, "no_reclaim_after_low_sweep"
-        return lvl, "low_sweep"
-    else:
-        idx = recent["high"].idxmax()
-        lvl = recent.loc[idx, "high"]
-        post = df5.loc[idx:].iloc[1:]
-        if len(post) < 2 or (post["close"] < lvl).sum() == 0:
-            return None, "no_reclaim_after_high_sweep"
-        return lvl, "high_sweep"
+def oanda_close_position(instrument: str, units: float):
+    side = "longUnits" if units > 0 else "shortUnits"
+    payload = {side: "ALL"}
+    r = oanda_session.post(
+        f"{OANDA_REST_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/positions/{instrument}/close",
+        json=payload,
+        timeout=15
+    )
+    logging.info("[MES] OANDA_CLOSE_RAW: %s", json.dumps(r.json(), cls=SafeEncoder))
 
-def is_bullish_micro_confirmed(df5: pd.DataFrame, level: float) -> Tuple[bool,str]:
-    if len(df5) < 3:
-        return False,"none"
-    last3 = df5.iloc[-3:]
-    if last3["close"].iloc[-1] <= level:
-        return False,"close_below"
-    if last3["low"].iloc[-1] <= last3["low"].iloc[-2]:
-        return False,"no_higher_low"
-    bar = last3.iloc[-1]
-    body = abs(bar["close"] - bar["open"])
-    wick = min(bar["open"], bar["close"]) - bar["low"]
-    if wick / (body + 1e-9) >= MIN_WICK_RATIO_CONFIRM:
-        return True,"wick_reject"
-    return (bar["close"] > bar["open"] and bar["close"] > last3["high"].iloc[-2]),"strong_close"
+# ============================================================
+# STRUCTURE HELPERS
+# ============================================================
+def is_bullish_structure(df: pd.DataFrame) -> bool:
+    if len(df) < MIN_STRUCTURE_LOOKBACK_BARS:
+        return False
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    return last["high"] > prev["high"] and last["low"] > prev["low"]
 
-def is_bearish_micro_confirmed(df5: pd.DataFrame, level: float) -> Tuple[bool,str]:
-    if len(df5) < 3:
-        return False,"none"
-    last3 = df5.iloc[-3:]
-    if last3["close"].iloc[-1] >= level:
-        return False,"close_above"
-    if last3["high"].iloc[-1] >= last3["high"].iloc[-2]:
-        return False,"no_lower_high"
-    bar = last3.iloc[-1]
-    body = abs(bar["close"] - bar["open"])
-    wick = bar["high"] - max(bar["open"], bar["close"])
-    if wick / (body + 1e-9) >= MIN_WICK_RATIO_CONFIRM:
-        return True,"wick_reject"
-    return (bar["close"] < bar["open"] and bar["close"] < last3["low"].iloc[-2]),"strong_close"
+def is_bearish_structure(df: pd.DataFrame) -> bool:
+    if len(df) < MIN_STRUCTURE_LOOKBACK_BARS:
+        return False
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    return last["high"] < prev["high"] and last["low"] < prev["low"]
 
 # ============================================================
 # RISK / ORDER HELPERS
@@ -336,6 +298,8 @@ def estimate_units_for_risk(instrument, direction, nav, risk_pct, entry, sl):
         return 0
     price = entry if entry > 0 else 1
     pips = dist / pip
+    if pips <= 0:
+        return 0
     pip_val_unit = pip if instrument.endswith("USD") else pip / price
     unit_risk = pips * pip_val_unit
     if unit_risk <= 0:
@@ -343,19 +307,20 @@ def estimate_units_for_risk(instrument, direction, nav, risk_pct, entry, sl):
     units = int(risk_amt / unit_risk)
     return units if direction == "bullish" else -units
 
-def oanda_place_market_order(instrument, units, sl, tp, tag):
-    side = "BUY" if units > 0 else "SELL"
-    logging.info(f"[MES] Placing {side} {instrument} {abs(units)} SL={sl} TP={tp}")
+def oanda_place_limit_order(instrument, units, entry_price, sl, tp, tag):
+    order_type = "BUY" if units > 0 else "SELL"
+    logging.info(f"[MES] Placing LIMIT {order_type} {instrument} {abs(units)} @ {entry_price} SL={sl} TP={tp}")
     payload = {
         "order": {
-            "type": "MARKET",
+            "type": "LIMIT",
             "instrument": instrument,
             "units": str(units),
-            "timeInForce": "FOK",
+            "price": f"{entry_price:.5f}",
+            "timeInForce": "GTC",
             "positionFill": "DEFAULT",
             "clientExtensions": {"tag": tag},
-            "stopLossOnFill": {"price": f"{sl}", "timeInForce": "GTC"},
-            "takeProfitOnFill": {"price": f"{tp}", "timeInForce": "GTC"},
+            "stopLossOnFill": {"price": f"{sl:.5f}", "timeInForce": "GTC"},
+            "takeProfitOnFill": {"price": f"{tp:.5f}", "timeInForce": "GTC"},
         }
     }
     r = oanda_session.post(
@@ -383,18 +348,17 @@ class MesDecision:
     exec_units: int = 0
     was_margin_capped: bool = False
     risk_pct_used: float = 0.0
-    sweep_type: str = ""
-    confirmation_type: str = ""
-    in_zone_ratio: float = 0.0
+    strong_body_ratio: float = 0.0
+    pullback_pips: float = 0.0
+    in_alignment: bool = True
 
 # ============================================================
 # AI-READY TRADE OBS LOG
 # ============================================================
 OBS_HEADERS = [
     "timestamp_utc","pair","direction",
-    "sweep_type","confirmation_type",
-    "retest_distance_pips","zone_radius_pips","in_zone_ratio",
-    "tp_pips","sl_pips","exec_units","was_margin_capped",
+    "strong_body_ratio","pullback_pips",
+    "sl_pips","tp_pips","exec_units","was_margin_capped",
     "session_hour_utc"
 ]
 
@@ -419,10 +383,6 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
         decision.reasons = ["Outside high-quality session"]
         return decision
 
-    if abs(open_pos.get(instrument, 0)) > 0:
-        decision.reasons = ["Existing open position"]
-        return decision
-
     try:
         df1h = oanda_get_candles(instrument, "H1")
         df4h = oanda_get_candles(instrument, "H4")
@@ -430,95 +390,107 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
         decision.reasons = [f"Data fetch failed: {e}"]
         return decision
 
-    # Volume filter
+    # Volume filter (kept from original)
     vol20 = df1h["volume"].rolling(20).mean().iloc[-1]
     curr_vol = df1h["volume"].iloc[-1]
     if pd.isna(vol20) or vol20 <= 0 or curr_vol / vol20 < 0.60:
         decision.reasons = ["Low volume"]
         return decision
 
-    # HTF RSI alignment
-    def rsi_htf(v):
-        return "bullish" if v >= HTF_BUY_MIN else "bearish" if v <= HTF_SELL_MAX else "neutral"
-
-    rsi_1h = compute_rsi(df1h["close"]).iloc[-1]
-    rsi_4h = compute_rsi(df4h["close"]).iloc[-1]
-    tf1h = "bullish" if rsi_1h >= RSI_BUY_MIN else "bearish" if rsi_1h <= RSI_SELL_MAX else "neutral"
-    tf4h = rsi_htf(rsi_4h)
-
-    if tf1h == "bullish" and tf4h != "bearish":
-        direction = "bullish"
-    elif tf1h == "bearish" and tf4h != "bullish":
-        direction = "bearish"
+    # Compute alignment via simple structure (HH/HL vs LH/LL)
+    bullish_aligned = is_bullish_structure(df4h) and is_bullish_structure(df1h)
+    bearish_aligned = is_bearish_structure(df4h) and is_bearish_structure(df1h)
+    if bullish_aligned:
+        alignment_dir = "bullish"
+    elif bearish_aligned:
+        alignment_dir = "bearish"
     else:
-        decision.reasons = ["HTF RSI misaligned"]
+        alignment_dir = None
+
+    pos_units = open_pos.get(instrument, 0)
+    if pos_units != 0:
+        # If open position and alignment breaks → close
+        pos_dir = "bullish" if pos_units > 0 else "bearish"
+        if alignment_dir != pos_dir:
+            oanda_close_position(instrument, pos_units)
+            decision.reasons = ["Closed due to alignment break"]
+            decision.direction = pos_dir
+            decision.in_alignment = False
+            return decision
+        else:
+            decision.reasons = ["Existing position, alignment holds"]
+            decision.direction = pos_dir
+            return decision
+
+    if alignment_dir is None:
+        decision.reasons = ["HTF structure misaligned"]
         return decision
 
-    # M5 environment
+    # M1 environment
     try:
-        df5 = oanda_get_candles(instrument, "M5")
+        df1 = oanda_get_candles(instrument, "M1")
     except Exception as e:
-        decision.reasons.append(f"M5 data failed: {e}")
+        decision.reasons.append(f"M1 data failed: {e}")
         return decision
 
-    if len(df5) < 20:
-        decision.reasons.append(f"M5 history too short ({len(df5)} bars)")
+    if len(df1) < 20:
+        decision.reasons.append(f"M1 history too short ({len(df1)} bars)")
         return decision
 
-    sweep_level, sweep_type = find_last_sweep_level(df5, direction)
-    if sweep_level is None:
-        decision.reasons.append(f"No valid sweep/retest ({sweep_type})")
+    atr1 = compute_atr(df1, period=14).iloc[-1]
+    if pd.isna(atr1) or atr1 <= 0:
+        decision.reasons.append("ATR invalid or zero on M1 — skipping")
         return decision
 
-    atr5 = compute_atr(df5, period=14).iloc[-1]
-    if pd.isna(atr5) or atr5 <= 0:
-        decision.reasons.append("ATR invalid or zero on M5 — skipping")
-        return decision
+    last_candle = df1.iloc[-1]
+    body = abs(last_candle["close"] - last_candle["open"])
+    strong_body_ratio = body / atr1 if atr1 > 0 else 0.0
 
-    zone_half = atr5 * RETTEST_ZONE_ATR_MULT
-    current = df5["close"].iloc[-1]
-    retest_distance = abs(current - sweep_level)
-    if retest_distance > zone_half:
-        decision.reasons.append("Not in retest zone")
-        return decision
+    is_strong = False
+    if alignment_dir == "bullish" and last_candle["close"] > last_candle["open"] and body > STRONG_CANDLE_ATR_MULT * atr1:
+        is_strong = True
+    elif alignment_dir == "bearish" and last_candle["close"] < last_candle["open"] and body > STRONG_CANDLE_ATR_MULT * atr1:
+        is_strong = True
 
-    if direction == "bullish":
-        confirmed, ctype = is_bullish_micro_confirmed(df5, sweep_level)
-    else:
-        confirmed, ctype = is_bearish_micro_confirmed(df5, sweep_level)
-
-    if not confirmed:
-        decision.reasons.append("5m structure not confirmed")
+    if not is_strong:
+        decision.reasons.append("No strong M1 candle in direction")
         return decision
 
     pip, prec = get_instrument_info_cached(instrument)
+    pullback = PULLBACK_PIPS * pip
     buffer = BUFFER_PIPS * pip
+    current = last_candle["close"]
+    direction = alignment_dir
 
     if direction == "bullish":
-        sl_price = sweep_level - buffer
-        sl_dist = current - sl_price
+        entry_price = current - pullback
+        recent_swing = min(df1["low"].iloc[-3:])
+        sl_price = recent_swing - buffer
+        sl_dist = entry_price - sl_price
     else:
-        sl_price = sweep_level + buffer
-        sl_dist = sl_price - current
+        entry_price = current + pullback
+        recent_swing = max(df1["high"].iloc[-3:])
+        sl_price = recent_swing + buffer
+        sl_dist = sl_price - entry_price
 
-    atr_cap = atr5 * PRO_SL_ATR_CAP_MULT
-    if sl_dist > atr_cap:
-        sl_dist = atr_cap
-        sl_price = current - sl_dist if direction == "bullish" else current + sl_dist
+    max_sl_dist = MAX_SL_PIPS * pip
+    if sl_dist > max_sl_dist:
+        sl_dist = max_sl_dist
+        sl_price = entry_price - sl_dist if direction == "bullish" else entry_price + sl_dist
 
     sl_price = round(sl_price, prec)
-    tp_dist = sl_dist * PRO_TP_RR
-    tp_price = round(current + tp_dist if direction == "bullish" else current - tp_dist, prec)
+    tp_dist = TP_PIPS * pip
+    tp_price = round(entry_price + tp_dist if direction == "bullish" else entry_price - tp_dist, prec)
 
     sl_pips = sl_dist / pip
-    tp_pips = tp_dist / pip
+    tp_pips = TP_PIPS
 
-    risk_units = estimate_units_for_risk(instrument, direction, nav, DEFAULT_RISK_PCT, current, sl_price)
+    risk_units = estimate_units_for_risk(instrument, direction, nav, DEFAULT_RISK_PCT, entry_price, sl_price)
 
     exec_units = risk_units
     was_margin_capped = False
     if MODE == "DEMO" and abs(risk_units) > 0:
-        notional = abs(risk_units) * current
+        notional = abs(risk_units) * entry_price
         margin_req = notional / 30.0
         max_margin = nav * DEMO_MAX_SWING_MARGIN_FRACTION
         if margin_req > max_margin:
@@ -532,34 +504,30 @@ def evaluate_pair(instrument: str, base_risk_pct: float, nav: float, open_pos: D
         return decision
 
     # Place order
-    oanda_place_market_order(instrument, exec_units, sl_price, tp_price, "MESv3.5.95_proRetest")
+    oanda_place_limit_order(instrument, exec_units, entry_price, sl_price, tp_price, "MESv3.5.96_proContinuation")
 
     decision.decision = "BUY" if exec_units > 0 else "SELL"
     decision.direction = direction
-    decision.entry_type = "pro_retest_scalp"
+    decision.entry_type = "pro_continuation_scalp"
     decision.tp_pips = tp_pips
     decision.sl_pips = sl_pips
     decision.risk_units = abs(risk_units)
     decision.exec_units = abs(exec_units)
     decision.was_margin_capped = was_margin_capped
     decision.risk_pct_used = DEFAULT_RISK_PCT
-    decision.sweep_type = sweep_type
-    decision.confirmation_type = ctype
-    decision.in_zone_ratio = (retest_distance / zone_half) if zone_half > 0 else 0.0
-    decision.reasons = ["pro_retest_scalp"]
+    decision.strong_body_ratio = round(strong_body_ratio, 3)
+    decision.pullback_pips = PULLBACK_PIPS
+    decision.reasons = ["pro_continuation_scalp"]
 
     # Append AI-ready observation
     append_trade_observation({
         "timestamp_utc": ts,
         "pair": instrument,
         "direction": direction,
-        "sweep_type": sweep_type,
-        "confirmation_type": ctype,
-        "retest_distance_pips": round(retest_distance / pip, 2),
-        "zone_radius_pips": round(zone_half / pip, 2),
-        "in_zone_ratio": round(decision.in_zone_ratio, 3),
-        "tp_pips": round(tp_pips, 2),
+        "strong_body_ratio": decision.strong_body_ratio,
+        "pullback_pips": decision.pullback_pips,
         "sl_pips": round(sl_pips, 2),
+        "tp_pips": round(tp_pips, 2),
         "exec_units": decision.exec_units,
         "was_margin_capped": was_margin_capped,
         "session_hour_utc": now.hour,
@@ -593,7 +561,7 @@ def telegram_cycle_report(diag: Dict[str, MesDecision], nav: float, trade_count:
             lines.append(
                 f"  ↳ {d.entry_type}{cap} | {d.exec_units}u / {d.risk_units}u "
                 f"| SL {d.sl_pips:.1f}p TP {d.tp_pips:.1f}p "
-                f"| zone {d.in_zone_ratio:.2f}"
+                f"| body {d.strong_body_ratio:.2f} pullback {d.pullback_pips:.1f}p"
             )
     telegram_send("\n".join(lines))
 

@@ -1,0 +1,24 @@
+[Unit]
+Description=Kraken XRP Trader – MES Crypto Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubu
+WorkingDirectory=/home/ubu/leo-services/kraken
+
+# 1) Load global 1Password session env
+EnvironmentFile=/home/ubu/leo-services/secrets/global.op.env
+
+# 2) Load Kraken-specific secret references
+EnvironmentFile=/home/ubu/leo-services/secrets/kraken_trade.op.env
+
+# 3) Run inside op session
+ExecStart=/usr/bin/op run -- /usr/bin/python3 /home/ubu/leo-services/kraken/kraken_xrp.py
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

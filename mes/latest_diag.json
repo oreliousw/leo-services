@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-01-05T16:51:02.035615+00:00",
-  "version": "MES v3.5.95 LIVE",
+  "generated_at": "2026-01-07T17:57:30.005291+00:00",
+  "version": "MES v3.5.96 LIVE",
   "mode": "LIVE",
   "pairs": {
     "EUR_USD": {
       "pair": "EUR_USD",
-      "time": "2026-01-05T16:50:57.860747+00:00",
+      "time": "2026-01-07T17:57:25.308843+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF RSI misaligned"
+        "HTF structure misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -19,39 +19,37 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
     },
     "GBP_USD": {
       "pair": "GBP_USD",
-      "time": "2026-01-05T16:50:58.352396+00:00",
-      "decision": "SKIPPED",
-      "direction": "NONE",
+      "time": "2026-01-07T17:57:25.820037+00:00",
+      "decision": "SELL",
+      "direction": "bearish",
       "reasons": [
-        "Init",
-        "Not in retest zone"
+        "pro_continuation_scalp"
       ],
-      "entry_type": "",
+      "entry_type": "pro_continuation_scalp",
       "trade_class": "SCALP",
-      "tp_pips": 0.0,
-      "sl_pips": 0.0,
-      "risk_units": 0,
-      "exec_units": 0,
+      "tp_pips": 3.5,
+      "sl_pips": 2.9999999999996696,
+      "risk_units": 3356,
+      "exec_units": 3356,
       "was_margin_capped": false,
-      "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "risk_pct_used": 0.008,
+      "strong_body_ratio": 1.284,
+      "pullback_pips": 1.5,
+      "in_alignment": true
     },
     "AUD_USD": {
       "pair": "AUD_USD",
-      "time": "2026-01-05T16:50:59.075557+00:00",
+      "time": "2026-01-07T17:57:26.897348+00:00",
       "decision": "SKIPPED",
-      "direction": "NONE",
+      "direction": "bullish",
       "reasons": [
-        "Init",
-        "Not in retest zone"
+        "Closed due to alignment break"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -61,18 +59,17 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": false
     },
     "NZD_USD": {
       "pair": "NZD_USD",
-      "time": "2026-01-05T16:50:59.729429+00:00",
+      "time": "2026-01-07T17:57:27.608729+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Init",
-        "Not in retest zone"
+        "HTF structure misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -82,17 +79,17 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
     },
     "USD_CAD": {
       "pair": "USD_CAD",
-      "time": "2026-01-05T16:51:00.422917+00:00",
+      "time": "2026-01-07T17:57:28.134799+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF RSI misaligned"
+        "HTF structure misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -102,17 +99,17 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
     },
     "USD_CHF": {
       "pair": "USD_CHF",
-      "time": "2026-01-05T16:51:00.914981+00:00",
+      "time": "2026-01-07T17:57:28.635806+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "HTF RSI misaligned"
+        "HTF structure misaligned"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -122,18 +119,18 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
     },
     "EUR_GBP": {
       "pair": "EUR_GBP",
-      "time": "2026-01-05T16:51:01.364589+00:00",
+      "time": "2026-01-07T17:57:29.216277+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
         "Init",
-        "Not in retest zone"
+        "No strong M1 candle in direction"
       ],
       "entry_type": "",
       "trade_class": "SCALP",
@@ -143,9 +140,9 @@
       "exec_units": 0,
       "was_margin_capped": false,
       "risk_pct_used": 0.0,
-      "sweep_type": "",
-      "confirmation_type": "",
-      "in_zone_ratio": 0.0
+      "strong_body_ratio": 0.0,
+      "pullback_pips": 0.0,
+      "in_alignment": true
     }
   }
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Kraken XRP Trader every 5 mins
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+AccuracySec=30s
+Unit=kraken_xrp.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

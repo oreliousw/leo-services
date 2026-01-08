@@ -3,53 +3,22 @@
 # File: kraken_btc.py
 # Version: v2.6 — Per-Asset USD Slice Autopilot (BTC/USD)
 #
-# SYSTEM DESIGN PHILOSOPHY — Kraken MES (BTC Line)
+# Mode: LIVE — MARKET BUY/SELL (signals-free execution)
+# Slice Model:
+#   • BUY spends only from btc.usd_slice
+#   • SELL credits proceeds back to btc.usd_slice
+#   • USD slice is isolated from other assets
 #
-# Mission:
-#   Gradually increase total BTC over time by rotating a limited
-#   trading slice through disciplined swing cycles, while the
-#   majority of holdings remain untouched as a long-term core.
-#
-# Core Principles:
-#   • TRUST THE RULES — deterministic execution
-#   • No discretionary overrides or manual confirmations
-#   • Protective logic is explicit and minimal (−12% reset)
-#   • Calm, quiet, disciplined — awareness ≠ intervention
-#
-# Risk Model:
-#   • Core BTC is never traded (reference only)
-#   • Only a defined BTC+USD slice rotates
-#   • Objective = accumulate BTC quantity over time
-#
-# v2.6 — Per-Asset USD Slice (this version):
-#   • Strict USD envelope for BTC strategy:
-#       - BUY spends only btc.usd_slice (not entire USD account)
-#       - SELL credits proceeds only to btc.usd_slice
-#   • Prevents BTC/XMR bots from sharing USD unintentionally
-#
-# Trading Rules:
-#   • BUY Trigger : −3.0% pullback from swing-high
-#   • SELL Target : +5.0% from entry
-#   • SELL Reset  : −12% drawdown protective exit
-#   • State Machine: idle → hold → reset
-#
-# Execution Mode:
-#   • LIVE — MARKET BUY/SELL on Kraken
+# Heartbeat:
+#   • Sends status ~every 4 hours
+#   • Only if usd_slice > 0
 #
 # Author: Orelious — Kraken MES BTC Line (2026)
 # ============================================================
 
-import os
-import sys
-import json
-import time
-import base64
-import hmac
-import hashlib
-import urllib.request
+import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
-
 
 # ------------------------------------------------------------
 # Environment
@@ -69,19 +38,17 @@ BTC_USD_SLICE_INIT = os.getenv("BTC_USD_SLICE_INIT")
 REPORT_HOUR = 6
 REPORT_MIN  = 0
 
-
 # ------------------------------------------------------------
 # Trading Constants
 # ------------------------------------------------------------
 PAIR = "XBTUSD"
-MIN_USD_BALANCE = 10.0    # No BUY if slice below this
-SELL_FRACTION   = 0.25    # Sell 25% on exits
-DRY_RUN         = False   # Set True to simulate
+MIN_USD_BALANCE = 10.0
+SELL_FRACTION   = 0.25
+DRY_RUN         = False
 
 STATE_FILE = Path("kraken_state_btc.json")
 SNAP_FILE  = Path("portfolio_snapshot_btc.json")
 LOG_FILE   = Path("kraken_events_btc.jsonl")
-
 
 # ------------------------------------------------------------
 # Utilities / Logging / Telegram
@@ -95,7 +62,6 @@ def log_event(ev: dict):
     except Exception as e:
         print(f"[WARN] Log write failed: {e}")
 
-
 def tg_send(msg: str):
     try:
         data = json.dumps({"chat_id": TG_CHAT, "text": msg}).encode()
@@ -108,22 +74,18 @@ def tg_send(msg: str):
     except Exception as e:
         print(f"[WARN] Telegram send failed: {e}")
 
-
 # ------------------------------------------------------------
 # Kraken API
 # ------------------------------------------------------------
 API_BASE = "https://api.kraken.com"
 
-
 def k_public(path: str):
     with urllib.request.urlopen(API_BASE + path) as resp:
         return json.loads(resp.read().decode())
 
-
 def k_private(path: str, params: str):
     nonce = str(int(time.time() * 1000))
     post  = f"nonce={nonce}&{params}"
-
     sha = hashlib.sha256(nonce.encode() + post.encode())
     sig = hmac.new(
         base64.b64decode(API_KEY_PRIVATE),
@@ -138,7 +100,6 @@ def k_private(path: str, params: str):
     req.add_header("User-Agent", "Kraken-MES-btc-v2.6")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
-
 
 def place_market_order(side: str, volume: float):
     volume_str = f"{volume:.8f}"
@@ -160,13 +121,11 @@ def place_market_order(side: str, volume: float):
         raise RuntimeError(res["error"])
     return res
 
-
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
 def pct(a, b):
     return ((b - a) / a) * 100.0 if a else 0.0
-
 
 def btc_price_and_change():
     data = k_public("/0/public/Ticker?pair=XBTUSD")
@@ -174,7 +133,6 @@ def btc_price_and_change():
     last = float(data["result"][k]["c"][0])
     open_24h = float(data["result"][k]["o"])
     return last, pct(open_24h, last)
-
 
 def get_kraken_balances():
     res = k_private("/0/private/Balance", "")
@@ -184,7 +142,6 @@ def get_kraken_balances():
         float(res["result"].get("XXBT", 0.0)),
         float(res["result"].get("ZUSD", 0.0)),
     )
-
 
 # ------------------------------------------------------------
 # State + Snapshot
@@ -197,8 +154,8 @@ DEFAULT_STATE = {
     "sell_approach_sent": False,
     "entry_time": None,
     "usd_slice": None,
+    "last_heartbeat": None,
 }
-
 
 def load_state():
     if STATE_FILE.exists():
@@ -220,10 +177,8 @@ def load_state():
 
     return base
 
-
 def save_state(s):
     STATE_FILE.write_text(json.dumps(s, indent=2))
-
 
 # ------------------------------------------------------------
 # Thresholds
@@ -234,6 +189,29 @@ SELL_TARGET    =  5.0
 SELL_APPROACH  =  4.0
 DRAWDOWN_RESET = -12.0
 
+# ------------------------------------------------------------
+# Heartbeat (only when slice > 0)
+# ------------------------------------------------------------
+HEARTBEAT_INTERVAL_HOURS = 4
+
+def maybe_send_heartbeat(state, price):
+    if (state.get("usd_slice") or 0) <= 0:
+        return  # no capital — stay quiet
+
+    now = time.time()
+    last = state.get("last_heartbeat") or 0
+    if now - last < HEARTBEAT_INTERVAL_HOURS * 3600:
+        return
+
+    tg_send(
+        "🔎 BTC Heartbeat — v2.6\n"
+        f"Mode: {state['mode']}\n"
+        f"Slice: ${state['usd_slice']:.2f}\n"
+        f"Price: {price:.2f}\n"
+        f"Swing High: {state['last_swing_high']:.2f}"
+    )
+
+    state["last_heartbeat"] = now
 
 # ------------------------------------------------------------
 # Trade Execution (USD Slice Model)
@@ -244,10 +222,6 @@ def execute_buy(price, state):
     usd_avail = min(slice_before, usd_bal)
 
     if usd_avail < MIN_USD_BALANCE:
-        tg_send(
-            f"⚠️ BTC BUY skipped — USD slice too low\n"
-            f"Slice: ${slice_before:.2f} | Min: ${MIN_USD_BALANCE:.2f}"
-        )
         return False
 
     usd_to_spend = usd_avail
@@ -267,7 +241,7 @@ def execute_buy(price, state):
         f"USD Spent: ${usd_to_spend:.2f}\n"
         f"BTC Bought: {volume:.8f}\n"
         f"USD Slice: ${slice_before:.2f} → ${state['usd_slice']:.2f}\n"
-        "Engine v2.6 (USD Slice)"
+        "Engine v2.6"
     )
 
     log_event({
@@ -282,12 +256,10 @@ def execute_buy(price, state):
     })
     return True
 
-
 def execute_sell(reason, price, state):
     btc_bal, _ = get_kraken_balances()
     volume = round(btc_bal * SELL_FRACTION, 8)
     notional = volume * price
-
     if notional < MIN_USD_BALANCE:
         return False
 
@@ -303,7 +275,7 @@ def execute_sell(reason, price, state):
         f"Sold: {volume:.8f}\n"
         f"Credited: ${notional:.2f}\n"
         f"USD Slice: ${slice_before:.2f} → ${state['usd_slice']:.2f}\n"
-        "Engine v2.6 (USD Slice)"
+        "Engine v2.6"
     )
 
     log_event({
@@ -317,7 +289,6 @@ def execute_sell(reason, price, state):
         "response": res,
     })
     return True
-
 
 # ------------------------------------------------------------
 # Engine Tick
@@ -333,34 +304,29 @@ def engine_tick():
         s["last_swing_high"] = price
         s["buy_approach_sent"] = False
 
+    maybe_send_heartbeat(s, price)
+
     pullback = pct(s["last_swing_high"], price)
 
-    # IDLE
     if s["mode"] == "idle":
         if not s["buy_approach_sent"] and pullback <= BUY_APPROACH:
             s["buy_approach_sent"] = True
-
         if pullback <= BUY_PULLBACK:
             execute_buy(price, s)
 
-    # HOLD
     elif s["mode"] == "hold":
         gain = pct(s["entry_price"], price)
-
         if gain <= DRAWDOWN_RESET:
             execute_sell("drawdown_reset", price, s)
-
         elif gain >= SELL_TARGET:
             execute_sell("target", price, s)
 
-    # RESET
     elif s["mode"] == "reset":
         if pullback <= BUY_PULLBACK:
             s["mode"] = "idle"
             s["buy_approach_sent"] = False
 
     save_state(s)
-
 
 # ------------------------------------------------------------
 # Main
