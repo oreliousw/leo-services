@@ -63,7 +63,8 @@ def solana_cli():
         return
 
     run(f"solana config set --keypair {SOLANA_KEYPAIR}")
-    run("solana")
+    run("solana", check=False)
+
 
 # ============================================================
 # Wallet Backup
