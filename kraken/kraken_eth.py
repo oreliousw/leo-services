@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_eth.py
-# Version: v2.7 — Asset-in-Hand + Balance Summary + Swing-Low PnL (ETH/USD)
+# Version: v2.8.1 — Heartbeat Restore (6h) + Shared USD Allocator (ETH/USD)
 #
-# Changes in v2.7:
-#   • Heartbeat always sends (even if usd_slice=0)
-#   • Asset-in-hand detection: if ETH balance > 0 and mode=idle → hold
-#   • Track swing LOW while holding to anchor unrealized PnL (Option B)
-#   • Heartbeat includes: balances, position value, unrealized PnL ($ and %)
-#   • SELL-APPROACH Telegram alert (one-time per leg) at +4% gain
+# v2.8.0 changes:
+#   • Centralized USD allocation via usd_allocator.py
+#   • ETH no longer self-manages capital authority
+#   • Buy sizing bounded by allocator + real USD
+#   • Sell credits return naturally to global USD pool
 #
-# Mode: LIVE — MARKET BUY/SELL (signals-free execution)
-# Author: Orelious — Kraken MES ETH Line (2026)
+# v2.8.1 changes:
+#   • Restored Telegram heartbeat (regression fix) — every 6 hours
+#   • Heartbeat persists via state["last_heartbeat"]
 # ============================================================
 
 import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
+from kraken_nonce import get_nonce
+from usd_allocator import get_allocatable_usd
+
+ENGINE_VERSION = "v2.8.1"
+
+print("[kraken] using shared nonce file /tmp/kraken_nonce.txt")
 
 # ------------------------------------------------------------
 # Environment
@@ -30,12 +36,12 @@ if not all([API_KEY_PUBLIC, API_KEY_PRIVATE, TG_TOKEN, TG_CHAT]):
     print("[FATAL] Missing required environment variables.")
     sys.exit(1)
 
-ETH_USD_SLICE_INIT = os.getenv("ETH_USD_SLICE_INIT")
-
 # ------------------------------------------------------------
 # Trading Constants
 # ------------------------------------------------------------
-PAIR = "ETHUSD"
+ASSET = "ETH"
+PAIR  = "ETHUSD"
+
 MIN_USD_BALANCE = 10.0
 SELL_FRACTION   = 0.25
 DRY_RUN         = False
@@ -44,7 +50,7 @@ STATE_FILE = Path("kraken_state_eth.json")
 LOG_FILE   = Path("kraken_events_eth.jsonl")
 
 # ------------------------------------------------------------
-# Utilities / Logging / Telegram
+# Logging / Telegram
 # ------------------------------------------------------------
 def log_event(ev: dict):
     try:
@@ -77,20 +83,25 @@ def k_public(path: str):
         return json.loads(resp.read().decode())
 
 def k_private(path: str, params: str):
-    nonce = str(int(time.time() * 1000))
-    post  = f"nonce={nonce}&{params}"
-    sha = hashlib.sha256(nonce.encode() + post.encode())
+    nonce = get_nonce()
+    postdata = f"nonce={nonce}&{params}"
+
+    sha = hashlib.sha256(
+        str(nonce).encode() + postdata.encode()
+    ).digest()
+
     sig = hmac.new(
         base64.b64decode(API_KEY_PRIVATE),
-        (path.encode() + sha.digest()),
+        path.encode() + sha,
         hashlib.sha512
-    )
-    signature = base64.b64encode(sig.digest())
+    ).digest()
 
-    req = urllib.request.Request(f"{API_BASE}{path}", post.encode())
+    signature = base64.b64encode(sig)
+
+    req = urllib.request.Request(f"{API_BASE}{path}", postdata.encode())
     req.add_header("API-Key", API_KEY_PUBLIC)
     req.add_header("API-Sign", signature)
-    req.add_header("User-Agent", "Kraken-MES-eth-v2.7")
+    req.add_header("User-Agent", f"Kraken-MES-eth-{ENGINE_VERSION}")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
 
@@ -100,7 +111,7 @@ def place_market_order(side: str, volume: float):
     if DRY_RUN:
         log_event({
             "event_type": "dry_run_order",
-            "engine_version": "v2.7",
+            "engine_version": ENGINE_VERSION,
             "side": side,
             "pair": PAIR,
             "volume": volume_str,
@@ -120,6 +131,9 @@ def place_market_order(side: str, volume: float):
 def pct(a, b):
     return ((b - a) / a) * 100.0 if a else 0.0
 
+def fmt_usd(x): return f"${x:,.2f}"
+def fmt_pct(x): return f"{x:+.2f}%"
+
 def eth_price_and_change():
     data = k_public("/0/public/Ticker?pair=ETHUSD")
     k = list(data["result"].keys())[0]
@@ -127,49 +141,49 @@ def eth_price_and_change():
     open_24h = float(data["result"][k]["o"])
     return last, pct(open_24h, last)
 
-def get_kraken_balances():
+# ------------------------------------------------------------
+# Balance Cache (60s)
+# ------------------------------------------------------------
+BAL_CACHE_TTL_SEC = 60
+_BAL_CACHE = {"ts": 0.0, "eth": 0.0, "usd": 0.0}
+
+def is_rate_limited_message(msg: str) -> bool:
+    m = (msg or "").lower()
+    return ("too many requests" in m) or ("rate-limited" in m)
+
+def get_kraken_balances_cached(force: bool = False):
+    now = time.time()
+    if (not force) and (now - _BAL_CACHE["ts"] < BAL_CACHE_TTL_SEC):
+        return _BAL_CACHE["eth"], _BAL_CACHE["usd"]
+
     res = k_private("/0/private/Balance", "")
     if res.get("error"):
         raise RuntimeError(res["error"])
-    return (
-        float(res["result"].get("XETH", 0.0)),
-        float(res["result"].get("ZUSD", 0.0)),
-    )
+
+    eth = float(res["result"].get("XETH", 0.0))
+    usd = float(res["result"].get("ZUSD", 0.0))
+
+    _BAL_CACHE.update({"ts": now, "eth": eth, "usd": usd})
+    return eth, usd
 
 # ------------------------------------------------------------
 # State
 # ------------------------------------------------------------
 DEFAULT_STATE = {
     "mode": "idle",
-    "entry_price": None,          # kept for compatibility, not used as PnL anchor here
+    "entry_price": None,
     "last_swing_high": None,
-    "last_swing_low": None,       # <-- used as PnL anchor in HOLD
+    "last_swing_low": None,
     "buy_approach_sent": False,
-    "sell_approach_sent": False,  # <-- Telegram gating
+    "sell_approach_sent": False,
     "entry_time": None,
-    "usd_slice": None,
     "last_heartbeat": None,
 }
 
 def load_state():
     if STATE_FILE.exists():
-        s = json.loads(STATE_FILE.read_text())
-    else:
-        s = {}
-
-    base = DEFAULT_STATE.copy()
-    base.update(s)
-
-    if base["usd_slice"] is None:
-        if ETH_USD_SLICE_INIT:
-            try:
-                base["usd_slice"] = float(ETH_USD_SLICE_INIT)
-            except:
-                base["usd_slice"] = 0.0
-        else:
-            base["usd_slice"] = 0.0
-
-    return base
+        return {**DEFAULT_STATE, **json.loads(STATE_FILE.read_text())}
+    return DEFAULT_STATE.copy()
 
 def save_state(s):
     STATE_FILE.write_text(json.dumps(s, indent=2))
@@ -182,121 +196,125 @@ BUY_APPROACH   = -2.5
 SELL_TARGET    =  5.0
 SELL_APPROACH  =  4.0
 DRAWDOWN_RESET = -12.0
+HEARTBEAT_INTERVAL_HOURS = 6
 
 # ------------------------------------------------------------
 # Heartbeat
 # ------------------------------------------------------------
-HEARTBEAT_INTERVAL_HOURS = 4
-
-def fmt_usd(x):  return f"${x:,.2f}"
-def fmt_pct(x):  return f"{x:+.2f}%"
-
 def maybe_send_heartbeat(state, price, eth_bal, usd_bal):
     now = time.time()
-    last = state.get("last_heartbeat") or 0
-    if now - last < HEARTBEAT_INTERVAL_HOURS * 3600:
+    last = state.get("last_heartbeat")
+    interval = HEARTBEAT_INTERVAL_HOURS * 3600
+
+    if last and (now - float(last) < interval):
         return
 
-    pos_value = eth_bal * price
-    anchor = state.get("last_swing_low") or price
-    pnl_pct = pct(anchor, price)
-    pnl_usd = (price - anchor) * eth_bal
+    mode = state.get("mode", "idle")
+    pos_usd = eth_bal * price
+    anchor = state.get("last_swing_low") or state.get("entry_price")
+    gain = pct(anchor, price) if anchor else 0.0
 
-    tg_send(
-        "🔎 ETH Heartbeat — v2.7\n"
-        f"Mode: {state['mode']}\n"
+    try:
+        slice_usd = get_allocatable_usd(
+            asset=ASSET,
+            usd_total_available=usd_bal,
+            usd_committed_by_asset=pos_usd if mode == "hold" else 0.0,
+        )
+    except Exception:
+        slice_usd = 0.0
+
+    sh = state.get("last_swing_high")
+    sl = state.get("last_swing_low")
+
+    msg = (
+        f"🫀 ETH Heartbeat — {ENGINE_VERSION}\n"
+        f"Mode: {mode}\n"
         f"ETH: {eth_bal:.8f}\n"
         f"USD: {fmt_usd(usd_bal)}\n"
-        f"Pos: {fmt_usd(pos_value)} @ {price:,.2f}\n"
-        f"PnL (vs swing low {anchor:,.2f}): {fmt_usd(pnl_usd)} ({fmt_pct(pnl_pct)})\n"
-        f"Slice: {fmt_usd(float(state.get('usd_slice', 0)))}\n"
-        f"Swing H/L: {state.get('last_swing_high', price):,.2f} / {state.get('last_swing_low', price):,.2f}"
+        f"Pos: {fmt_usd(pos_usd)} @ {price:,.2f}\n"
+        f"PnL (vs anchor {anchor:,.2f}): {fmt_pct(gain)}\n"
+        f"Slice: {fmt_usd(slice_usd)}"
     )
+
+    if sh and sl:
+        msg += f"\nSwing H/L: {sh:,.2f} / {sl:,.2f}"
+
+    tg_send(msg)
 
     state["last_heartbeat"] = now
 
-# ------------------------------------------------------------
-# Asset-in-hand detection + swing tracking
-# ------------------------------------------------------------
-def ensure_hold_if_asset_present(state, eth_bal, price):
-    if eth_bal > 0 and state["mode"] == "idle":
-        state["mode"] = "hold"
-        state["sell_approach_sent"] = False
-        # initialize swing low anchor on first detection
-        if state.get("last_swing_low") is None:
-            state["last_swing_low"] = price
-
-def update_swing_extremes(state, price):
-    if state["last_swing_high"] is None:
-        state["last_swing_high"] = price
-    if state["last_swing_low"] is None:
-        state["last_swing_low"] = price
-
-    if price > state["last_swing_high"]:
-        state["last_swing_high"] = price
-        state["buy_approach_sent"] = False
-
-    # In HOLD, keep walking the swing low down (PnL anchor B)
-    if state["mode"] == "hold" and price < state["last_swing_low"]:
-        state["last_swing_low"] = price
+    log_event({
+        "event_type": "eth_heartbeat",
+        "engine_version": ENGINE_VERSION,
+        "mode": mode,
+        "price": price,
+        "eth": eth_bal,
+        "usd": usd_bal,
+        "pos_usd": pos_usd,
+        "anchor": anchor,
+        "gain_pct": gain,
+        "slice_usd": slice_usd,
+        "swing_high": sh,
+        "swing_low": sl,
+    })
 
 # ------------------------------------------------------------
 # Trade Execution
 # ------------------------------------------------------------
 def execute_buy(price, state):
-    _, usd_bal = get_kraken_balances()
-    slice_before = float(state["usd_slice"])
-    usd_avail = min(slice_before, usd_bal)
+    _, usd_bal = get_kraken_balances_cached(force=True)
 
-    if usd_avail < MIN_USD_BALANCE:
+    usd_committed = 0.0
+
+    usd_allowed = get_allocatable_usd(
+        asset=ASSET,
+        usd_total_available=usd_bal,
+        usd_committed_by_asset=usd_committed,
+    )
+
+    if usd_allowed < MIN_USD_BALANCE:
         return False
 
-    usd_to_spend = usd_avail
-    volume = round(usd_to_spend / price, 8)
-
+    volume = round(usd_allowed / price, 8)
     res = place_market_order("buy", volume)
+    _BAL_CACHE["ts"] = 0.0
 
-    state["usd_slice"] = max(0.0, slice_before - usd_to_spend)
+    state["mode"] = "hold"
     state["entry_price"] = price
     state["entry_time"] = time.time()
-    state["mode"] = "hold"
     state["sell_approach_sent"] = False
-
-    # reset swing low anchor on new buys
     state["last_swing_low"] = price
 
     tg_send(
         "🟢 ETH BUY EXECUTED\n"
         f"Price: {price:,.2f}\n"
-        f"USD Spent: {fmt_usd(usd_to_spend)}\n"
+        f"USD Spent: {fmt_usd(usd_allowed)}\n"
         f"ETH Bought: {volume:.8f}\n"
-        f"USD Slice: {fmt_usd(slice_before)} → {fmt_usd(state['usd_slice'])}\n"
-        "Engine v2.7"
+        f"Engine {ENGINE_VERSION}"
     )
 
     log_event({
         "event_type": "eth_buy",
-        "engine_version": "v2.7",
+        "engine_version": ENGINE_VERSION,
         "price": price,
         "volume": volume,
-        "usd_spent": usd_to_spend,
-        "slice_before": slice_before,
-        "slice_after": state["usd_slice"],
+        "usd_spent": usd_allowed,
         "response": res,
     })
     return True
 
 def execute_sell(reason, price, state):
-    eth_bal, _ = get_kraken_balances()
+    eth_bal, _ = get_kraken_balances_cached(force=True)
+
     volume = round(eth_bal * SELL_FRACTION, 8)
     notional = volume * price
+
     if notional < MIN_USD_BALANCE:
         return False
 
     res = place_market_order("sell", volume)
+    _BAL_CACHE["ts"] = 0.0
 
-    slice_before = float(state["usd_slice"])
-    state["usd_slice"] = slice_before + notional
     state["mode"] = "reset"
     state["sell_approach_sent"] = False
 
@@ -305,18 +323,15 @@ def execute_sell(reason, price, state):
         f"Price: {price:,.2f}\n"
         f"Sold: {volume:.8f}\n"
         f"Credited: {fmt_usd(notional)}\n"
-        f"USD Slice: {fmt_usd(slice_before)} → {fmt_usd(state['usd_slice'])}\n"
-        "Engine v2.7"
+        f"Engine {ENGINE_VERSION}"
     )
 
     log_event({
         "event_type": f"eth_sell_{reason}",
-        "engine_version": "v2.7",
+        "engine_version": ENGINE_VERSION,
         "price": price,
         "volume": volume,
         "notional": notional,
-        "slice_before": slice_before,
-        "slice_after": state["usd_slice"],
         "response": res,
     })
     return True
@@ -327,35 +342,19 @@ def execute_sell(reason, price, state):
 def engine_tick():
     s = load_state()
     price, _ = eth_price_and_change()
-    eth_bal, usd_bal = get_kraken_balances()
+    eth_bal, usd_bal = get_kraken_balances_cached(force=False)
 
-    ensure_hold_if_asset_present(s, eth_bal, price)
-    update_swing_extremes(s, price)
-
-    # heartbeat always (timed)
     maybe_send_heartbeat(s, price, eth_bal, usd_bal)
 
-    pullback = pct(s["last_swing_high"], price)
+    pullback = pct(s.get("last_swing_high") or price, price)
 
     if s["mode"] == "idle":
-        if not s["buy_approach_sent"] and pullback <= BUY_APPROACH:
-            s["buy_approach_sent"] = True
         if pullback <= BUY_PULLBACK:
             execute_buy(price, s)
 
     elif s["mode"] == "hold":
         anchor = s.get("last_swing_low") or price
         gain = pct(anchor, price)
-
-        # SELL-APPROACH alert (one-time per leg)
-        if (not s.get("sell_approach_sent")) and gain >= SELL_APPROACH and gain < SELL_TARGET:
-            s["sell_approach_sent"] = True
-            tg_send(
-                "⚠️ ETH SELL APPROACH — v2.7\n"
-                f"Gain (vs swing low {anchor:,.2f}): {gain:+.2f}%\n"
-                f"Price: {price:,.2f}\n"
-                f"Target: {SELL_TARGET:.1f}%"
-            )
 
         if gain <= DRAWDOWN_RESET:
             execute_sell("drawdown_reset", price, s)
@@ -365,7 +364,6 @@ def engine_tick():
     elif s["mode"] == "reset":
         if pullback <= BUY_PULLBACK:
             s["mode"] = "idle"
-            s["buy_approach_sent"] = False
 
     save_state(s)
 
@@ -374,9 +372,17 @@ def engine_tick():
 # ------------------------------------------------------------
 if __name__ == "__main__":
     try:
-        print("Kraken ETH Trader v2.7 tick OK")
+        print(f"Kraken ETH Trader {ENGINE_VERSION} tick OK")
         engine_tick()
     except Exception as e:
-        tg_send(f"❌ Kraken ETH v2.7 runtime error:\n{e}")
-        print(f"[FATAL] {e}")
-        sys.exit(1)
+        msg = str(e)
+
+        if is_rate_limited_message(msg):
+            print(f"[WARN] Kraken rate-limited: {msg}")
+            time.sleep(60)
+            sys.exit(0)
+
+        tg_send(f"❌ Kraken ETH {ENGINE_VERSION} runtime error:\n{msg}")
+        print(f"[ERROR] {msg}")
+        time.sleep(30)
+        sys.exit(0)

@@ -2,16 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 MES Swing Trader
-Version: v3.4.13 — Structure Alignment + Early Exit on Trend Break
+Version: v3.4.14 — Single Candle Structure Check
 
-CHANGES IN 3.4.13
+CHANGES IN 3.4.14
 ---------------------------------------------------------
-• Replaced RSI trend logic with simple structure rules:
-    - Bullish = Higher Highs + Higher Lows
-    - Bearish = Lower Highs + Lower Lows
-• H4 + H1 must align in the same direction before entry
-• NEW: If a position is open and alignment breaks →
-        close trade immediately (early-exit vs waiting for SL)
+• Switched structure logic to single candle:
+    - Bullish = Close > Open
+    - Bearish = Close < Open
+• Still requires H4 + H1 alignment for entry
+• Early exit on alignment break unchanged
 
 All other behavior intentionally unchanged:
 • NAV + margin cap logic
@@ -94,7 +93,7 @@ if IS_LIVE and not LIVE_ALLOWED:
     sys.exit(1)
 
 TAG = "MES_SWING_LIVE_v3" if IS_LIVE else "MES_SWING_DEMO_v3"
-VERSION = f"MES Swing v3.4.13 {MODE} [{TAG}]"
+VERSION = f"MES Swing v3.4.14 {MODE} [{TAG}]"
 
 RISK_PCT = float(os.getenv("SWING_RISK_PCT_LIVE","0.0025")) if IS_LIVE else float(os.getenv("SWING_RISK_PCT_DEMO","0.02"))
 MAX_MARGIN_FRAC = float(os.getenv("SWING_MAX_MARGIN_FRAC_LIVE","0.10")) if IS_LIVE else float(os.getenv("SWING_MAX_MARGIN_FRAC_DEMO","0.20"))
@@ -161,17 +160,13 @@ def oanda_close_position(pair: str):
 # ============================================================
 # STRUCTURE-BASED TREND HELPERS
 # ============================================================
-def is_bullish_structure(df: pd.DataFrame, lookback: int = 3) -> bool:
-    recent = df.tail(lookback+1)
-    highs  = recent["high"].values
-    lows   = recent["low"].values
-    return highs[-1] > highs[-2] and lows[-1] > lows[-2]
+def is_bullish_structure(df: pd.DataFrame) -> bool:
+    last = df.iloc[-1]
+    return last["close"] > last["open"]
 
-def is_bearish_structure(df: pd.DataFrame, lookback: int = 3) -> bool:
-    recent = df.tail(lookback+1)
-    highs  = recent["high"].values
-    lows   = recent["low"].values
-    return highs[-1] < highs[-2] and lows[-1] < lows[-2]
+def is_bearish_structure(df: pd.DataFrame) -> bool:
+    last = df.iloc[-1]
+    return last["close"] < last["open"]
 
 def compute_alignment(df4h, df1h) -> str | None:
     if is_bullish_structure(df4h) and is_bullish_structure(df1h):

@@ -1,18 +1,17 @@
 {
-  "generated_at": "2026-01-08T18:55:10.927549+00:00",
-  "version": "MES Scalp v3.5.96 DEMO",
-  "mode": "DEMO",
+  "generated_at": "2026-01-09T15:28:15.352857+00:00",
+  "version": "MES v3.5.98 LIVE",
+  "mode": "LIVE",
   "pairs": {
     "EUR_USD": {
       "pair": "EUR_USD",
-      "time": "2026-01-08T18:55:10.927491+00:00",
+      "time": "2026-01-09T15:28:11.037385+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -25,14 +24,13 @@
     },
     "GBP_USD": {
       "pair": "GBP_USD",
-      "time": "2026-01-08T18:55:10.927523+00:00",
+      "time": "2026-01-09T15:28:11.499359+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -45,14 +43,13 @@
     },
     "AUD_USD": {
       "pair": "AUD_USD",
-      "time": "2026-01-08T18:55:10.927529+00:00",
+      "time": "2026-01-09T15:28:11.957650+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -65,14 +62,13 @@
     },
     "NZD_USD": {
       "pair": "NZD_USD",
-      "time": "2026-01-08T18:55:10.927533+00:00",
+      "time": "2026-01-09T15:28:12.463362+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -85,14 +81,13 @@
     },
     "USD_CAD": {
       "pair": "USD_CAD",
-      "time": "2026-01-08T18:55:10.927537+00:00",
+      "time": "2026-01-09T15:28:12.933095+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "NO_STRONG_M1_CANDLE"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -105,14 +100,13 @@
     },
     "USD_CHF": {
       "pair": "USD_CHF",
-      "time": "2026-01-08T18:55:10.927541+00:00",
+      "time": "2026-01-09T15:28:14.308382+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,
@@ -125,14 +119,13 @@
     },
     "EUR_GBP": {
       "pair": "EUR_GBP",
-      "time": "2026-01-08T18:55:10.927545+00:00",
+      "time": "2026-01-09T15:28:14.897634+00:00",
       "decision": "SKIPPED",
       "direction": "NONE",
       "reasons": [
-        "Outside high-quality session"
+        "HTF_MISALIGNED"
       ],
-      "entry_type": "",
-      "trade_class": "SCALP",
+      "entry_type": "NONE",
       "tp_pips": 0.0,
       "sl_pips": 0.0,
       "risk_units": 0,

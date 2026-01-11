@@ -27,6 +27,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 
+Restart=no
+SuccessExitStatus=1
+
+
+
 # 🔐 Allow 1Password to write its config only
 ProtectHome=read-only
 ReadWritePaths=/home/ubu/.config/op

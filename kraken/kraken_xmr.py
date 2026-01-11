@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_xmr.py
-# Version: v2.6-XMR — Per-Asset USD Slice Autopilot (XMR/USD)
+# Version: v2.8.1 — Heartbeat Restore (6h) + Shared USD Allocator (XMR/USD)
 #
-# Execution: LIVE — MARKET buy/sell
-# Slice Model: isolated USD envelope for XMR only
+# v2.8.0 changes:
+#   • Centralized USD allocation via usd_allocator.py
+#   • XMR no longer self-manages capital authority
+#   • Buy sizing bounded by allocator + real USD
+#   • Sell credits return naturally to global USD pool
 #
-# Heartbeat:
-#   • Sends every ~4 hours
-#   • Only if usd_slice > 0
+# v2.8.1 changes:
+#   • Restored Telegram heartbeat (regression fix) — every 6 hours
+#   • Heartbeat persists via state["last_heartbeat"]
 # ============================================================
 
 import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
+from kraken_nonce import get_nonce
+from usd_allocator import get_allocatable_usd
 
+ENGINE_VERSION = "v2.8.1"
+
+print("[kraken] using shared nonce file /tmp/kraken_nonce.txt")
+
+# ------------------------------------------------------------
+# Environment
+# ------------------------------------------------------------
 API_KEY_PUBLIC  = os.getenv("KRAKEN_API_KEY")
 API_KEY_PRIVATE = os.getenv("KRAKEN_PRV_KEY")
 TG_TOKEN = os.getenv("KRAKEN_TOKEN")
@@ -24,21 +36,22 @@ if not all([API_KEY_PUBLIC, API_KEY_PRIVATE, TG_TOKEN, TG_CHAT]):
     print("[FATAL] Missing required environment variables.")
     sys.exit(1)
 
-CORE_XMR_REFERENCE = float(os.getenv("CORE_XMR_REFERENCE", "0.0"))
-XMR_USD_SLICE_INIT = os.getenv("XMR_USD_SLICE_INIT")
-
-REPORT_HOUR = 6
-REPORT_MIN  = 0
-
+# ------------------------------------------------------------
+# Trading Constants
+# ------------------------------------------------------------
+ASSET = "XMR"
 PAIR = "XMRUSD"
+
 MIN_USD_BALANCE = 10.0
 SELL_FRACTION   = 0.25
 DRY_RUN         = False
 
 STATE_FILE = Path("kraken_state_xmr.json")
-SNAP_FILE  = Path("portfolio_snapshot_xmr.json")
 LOG_FILE   = Path("kraken_events_xmr.jsonl")
 
+# ------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------
 def log_event(ev: dict):
     try:
         ev = dict(ev)
@@ -60,6 +73,9 @@ def tg_send(msg: str):
     except Exception as e:
         print(f"[WARN] Telegram send failed: {e}")
 
+# ------------------------------------------------------------
+# Kraken API
+# ------------------------------------------------------------
 API_BASE = "https://api.kraken.com"
 
 def k_public(path: str):
@@ -67,180 +83,314 @@ def k_public(path: str):
         return json.loads(resp.read().decode())
 
 def k_private(path: str, params: str):
-    nonce = str(int(time.time() * 1000))
-    post  = f"nonce={nonce}&{params}"
-    sha = hashlib.sha256(nonce.encode() + post.encode())
+    nonce = get_nonce()
+    postdata = f"nonce={nonce}&{params}"
+
+    sha = hashlib.sha256(
+        str(nonce).encode() + postdata.encode()
+    ).digest()
+
     sig = hmac.new(
         base64.b64decode(API_KEY_PRIVATE),
-        (path.encode() + sha.digest()),
+        path.encode() + sha,
         hashlib.sha512
-    )
-    signature = base64.b64encode(sig.digest())
+    ).digest()
 
-    req = urllib.request.Request(f"{API_BASE}{path}", post.encode())
+    signature = base64.b64encode(sig)
+
+    req = urllib.request.Request(f"{API_BASE}{path}", postdata.encode())
     req.add_header("API-Key", API_KEY_PUBLIC)
     req.add_header("API-Sign", signature)
-    req.add_header("User-Agent", "Kraken-MES-xmr-v2.6")
+    req.add_header("User-Agent", f"Kraken-MES-xmr-{ENGINE_VERSION}")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode())
 
 def place_market_order(side: str, volume: float):
     volume_str = f"{volume:.8f}"
+
     if DRY_RUN:
-        log_event({"event_type":"dry_run_order","side":side,"pair":PAIR})
-        return {"result":"dry_run"}
+        log_event({
+            "event_type": "dry_run_order",
+            "engine_version": ENGINE_VERSION,
+            "side": side,
+            "pair": PAIR,
+            "volume": volume_str
+        })
+        print(f"[DRY-RUN] Would place {side} {PAIR} {volume_str}")
+        return {"result": "dry_run"}
+
     params = f"pair={PAIR}&type={side}&ordertype=market&volume={volume_str}"
     res = k_private("/0/private/AddOrder", params)
     if res.get("error"):
         raise RuntimeError(res["error"])
     return res
 
-def pct(a,b): return ((b-a)/a)*100.0 if a else 0.0
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def pct(a, b):
+    return ((b - a) / a) * 100.0 if a else 0.0
+
+def fmt_usd(x): return f"${x:,.2f}"
+def fmt_pct(x): return f"{x:+.2f}%"
 
 def xmr_price_and_change():
     data = k_public("/0/public/Ticker?pair=XMRUSD")
     k = list(data["result"].keys())[0]
     last = float(data["result"][k]["c"][0])
     open_24h = float(data["result"][k]["o"])
-    return last, pct(open_24h,last)
+    return last, pct(open_24h, last)
 
-def get_kraken_balances():
-    res = k_private("/0/private/Balance","")
+# ------------------------------------------------------------
+# Balance Cache (60s)
+# ------------------------------------------------------------
+BAL_CACHE_TTL = 60
+_BAL = {"ts": 0.0, "xmr": 0.0, "usd": 0.0}
+
+def is_rate_limited(msg: str) -> bool:
+    m = (msg or "").lower()
+    return ("rate" in m) or ("too many requests" in m)
+
+def get_balances(force=False):
+    now = time.time()
+    if not force and now - _BAL["ts"] < BAL_CACHE_TTL:
+        return _BAL["xmr"], _BAL["usd"]
+
+    res = k_private("/0/private/Balance", "")
     if res.get("error"):
         raise RuntimeError(res["error"])
-    return (
-        float(res["result"].get("XXMR",0.0)),
-        float(res["result"].get("ZUSD",0.0)),
-    )
 
+    r = res["result"]
+    xmr = float(r.get("XXMR", 0.0))
+    usd = float(r.get("ZUSD", 0.0))
+
+    _BAL.update({"ts": now, "xmr": xmr, "usd": usd})
+    return xmr, usd
+
+# ------------------------------------------------------------
+# State
+# ------------------------------------------------------------
 DEFAULT_STATE = {
-    "mode":"idle",
-    "entry_price":None,
-    "last_swing_high":None,
-    "buy_approach_sent":False,
-    "sell_approach_sent":False,
-    "entry_time":None,
-    "usd_slice":None,
-    "last_heartbeat":None,
+    "mode": "idle",
+    "entry_price": None,
+    "last_swing_high": None,
+    "last_swing_low": None,
+    "buy_approach_sent": False,
+    "sell_approach_sent": False,
+    "entry_time": None,
+    "last_heartbeat": None,
 }
 
 def load_state():
     if STATE_FILE.exists():
-        s=json.loads(STATE_FILE.read_text())
-    else:
-        s={}
-    base=DEFAULT_STATE.copy(); base.update(s)
-    if base["usd_slice"] is None:
-        if XMR_USD_SLICE_INIT:
-            try: base["usd_slice"]=float(XMR_USD_SLICE_INIT)
-            except: base["usd_slice"]=0.0
-        else: base["usd_slice"]=0.0
-    return base
+        return {**DEFAULT_STATE, **json.loads(STATE_FILE.read_text())}
+    return DEFAULT_STATE.copy()
 
 def save_state(s):
-    STATE_FILE.write_text(json.dumps(s,indent=2))
+    STATE_FILE.write_text(json.dumps(s, indent=2))
 
-BUY_PULLBACK=-3.0
-BUY_APPROACH=-2.5
-SELL_TARGET=5.0
-SELL_APPROACH=4.0
-DRAWDOWN_RESET=-12.0
+# ------------------------------------------------------------
+# Thresholds
+# ------------------------------------------------------------
+BUY_PULLBACK   = -3.0
+BUY_APPROACH   = -2.5
+SELL_TARGET    =  5.0
+SELL_APPROACH  =  4.0
+DRAWDOWN_RESET = -12.0
+HEARTBEAT_INTERVAL_HOURS = 6
 
-HEARTBEAT_INTERVAL_HOURS=4
-def maybe_send_heartbeat(state, price):
-    if (state.get("usd_slice") or 0) <= 0:
+# ------------------------------------------------------------
+# Heartbeat
+# ------------------------------------------------------------
+def maybe_send_heartbeat(state, price, xmr_bal, usd_bal):
+    now = time.time()
+    last = state.get("last_heartbeat")
+    interval = HEARTBEAT_INTERVAL_HOURS * 3600
+
+    if last and (now - float(last) < interval):
         return
-    now=time.time()
-    last=state.get("last_heartbeat") or 0
-    if now-last < HEARTBEAT_INTERVAL_HOURS*3600:
-        return
-    tg_send(
-        "🔎 XMR Heartbeat — v2.6\n"
-        f"Mode: {state['mode']}\n"
-        f"Slice: ${state['usd_slice']:.2f}\n"
-        f"Price: {price:.2f}\n"
-        f"Swing High: {state['last_swing_high']:.2f}"
+
+    mode = state.get("mode", "idle")
+    pos_usd = xmr_bal * price
+    anchor = state.get("last_swing_low") or state.get("entry_price")
+    gain = pct(anchor, price) if anchor else 0.0
+
+    try:
+        slice_usd = get_allocatable_usd(
+            asset=ASSET,
+            usd_total_available=usd_bal,
+            usd_committed_by_asset=pos_usd if mode == "hold" else 0.0,
+        )
+    except Exception:
+        slice_usd = 0.0
+
+    sh = state.get("last_swing_high")
+    sl = state.get("last_swing_low")
+
+    if sh and sl:
+        swing = f"Swing H/L: {sh:,.2f} / {sl:,.2f}"
+    else:
+        swing = None
+
+    msg = (
+        f"🫀 XMR Heartbeat — {ENGINE_VERSION}\n"
+        f"Mode: {mode}\n"
+        f"XMR: {xmr_bal:.8f}\n"
+        f"USD: {fmt_usd(usd_bal)}\n"
+        f"Pos: {fmt_usd(pos_usd)} @ {price:,.2f}\n"
+        f"PnL (vs anchor {anchor:,.2f}): {fmt_pct(gain)}\n"
+        f"Slice: {fmt_usd(slice_usd)}"
     )
-    state["last_heartbeat"]=now
 
-def execute_buy(price,state):
-    xmr_bal,usd_bal=get_kraken_balances()
-    slice_before=float(state["usd_slice"])
-    usd_avail=min(slice_before,usd_bal)
-    if usd_avail<MIN_USD_BALANCE: return False
-    volume=round(usd_avail/price,8)
-    res=place_market_order("buy",volume)
-    state["usd_slice"]=max(0.0,slice_before-usd_avail)
-    state["entry_price"]=price; state["entry_time"]=time.time()
-    state["mode"]="hold"; state["sell_approach_sent"]=False
+    if swing:
+        msg += f"\n{swing}"
+
+    tg_send(msg)
+
+    state["last_heartbeat"] = now
+
+    log_event({
+        "event_type": "xmr_heartbeat",
+        "engine_version": ENGINE_VERSION,
+        "mode": mode,
+        "price": price,
+        "xmr": xmr_bal,
+        "usd": usd_bal,
+        "pos_usd": pos_usd,
+        "anchor": anchor,
+        "gain_pct": gain,
+        "slice_usd": slice_usd,
+        "swing_high": sh,
+        "swing_low": sl,
+    })
+
+# ------------------------------------------------------------
+# Trade Execution
+# ------------------------------------------------------------
+def execute_buy(price, state):
+    _, usd_bal = get_balances(force=True)
+
+    usd_committed = 0.0
+
+    usd_allowed = get_allocatable_usd(
+        asset=ASSET,
+        usd_total_available=usd_bal,
+        usd_committed_by_asset=usd_committed,
+    )
+
+    if usd_allowed < MIN_USD_BALANCE:
+        return False
+
+    usd_to_spend = usd_allowed
+    volume = round(usd_to_spend / price, 8)
+
+    res = place_market_order("buy", volume)
+    _BAL["ts"] = 0.0
+
+    state["mode"] = "hold"
+    state["entry_price"] = price
+    state["entry_time"] = time.time()
+    state["sell_approach_sent"] = False
+    state["last_swing_low"] = price
+
     tg_send(
         "🟢 XMR BUY EXECUTED\n"
-        f"Price: {price:.2f}\n"
-        f"USD Spent: ${usd_avail:.2f}\n"
+        f"Price: {price:,.2f}\n"
+        f"USD Spent: {fmt_usd(usd_to_spend)}\n"
         f"XMR Bought: {volume:.8f}\n"
-        f"USD Slice: ${slice_before:.2f} → ${state['usd_slice']:.2f}"
+        f"Engine {ENGINE_VERSION}"
     )
-    log_event({"event_type":"xmr_buy","price":price,"volume":volume})
+
+    log_event({
+        "event_type": "xmr_buy",
+        "engine_version": ENGINE_VERSION,
+        "price": price,
+        "volume": volume,
+        "usd_spent": usd_to_spend,
+        "response": res,
+    })
     return True
 
-def execute_sell(reason,price,state):
-    xmr_bal,_=get_kraken_balances()
-    volume=round(xmr_bal*SELL_FRACTION,8)
-    notional=volume*price
-    if notional<MIN_USD_BALANCE: return False
-    res=place_market_order("sell",volume)
-    slice_before=float(state["usd_slice"])
-    state["usd_slice"]=slice_before+notional
-    state["mode"]="reset"
+def execute_sell(reason, price, state):
+    xmr_bal, _ = get_balances(force=True)
+
+    volume = round(xmr_bal * SELL_FRACTION, 8)
+    notional = volume * price
+
+    if notional < MIN_USD_BALANCE:
+        return False
+
+    res = place_market_order("sell", volume)
+    _BAL["ts"] = 0.0
+
+    state["mode"] = "reset"
+    state["sell_approach_sent"] = False
+
     tg_send(
         f"🔵 XMR SELL ({reason})\n"
-        f"Price: {price:.2f}\n"
+        f"Price: {price:,.2f}\n"
         f"Sold: {volume:.8f}\n"
-        f"Credited: ${notional:.2f}\n"
-        f"USD Slice: ${slice_before:.2f} → ${state['usd_slice']:.2f}"
+        f"Credited: {fmt_usd(notional)}\n"
+        f"Engine {ENGINE_VERSION}"
     )
-    log_event({"event_type":f"xmr_sell_{reason}","price":price})
+
+    log_event({
+        "event_type": f"xmr_sell_{reason}",
+        "engine_version": ENGINE_VERSION,
+        "price": price,
+        "volume": volume,
+        "notional": notional,
+        "response": res,
+    })
     return True
 
+# ------------------------------------------------------------
+# Engine
+# ------------------------------------------------------------
 def engine_tick():
-    s=load_state()
-    price,_=xmr_price_and_change()
+    s = load_state()
+    price, _ = xmr_price_and_change()
+    xmr, usd = get_balances(force=False)
 
-    if s["last_swing_high"] is None:
-        s["last_swing_high"]=price
-    if price>s["last_swing_high"]:
-        s["last_swing_high"]=price
-        s["buy_approach_sent"]=False
+    maybe_send_heartbeat(s, price, xmr, usd)
 
-    maybe_send_heartbeat(s,price)
+    pullback = pct(s.get("last_swing_high") or price, price)
 
-    pullback=pct(s["last_swing_high"],price)
+    if s["mode"] == "idle":
+        if pullback <= BUY_PULLBACK:
+            execute_buy(price, s)
 
-    if s["mode"]=="idle":
-        if not s["buy_approach_sent"] and pullback<=BUY_APPROACH:
-            s["buy_approach_sent"]=True
-        if pullback<=BUY_PULLBACK:
-            execute_buy(price,s)
+    elif s["mode"] == "hold":
+        anchor = s.get("last_swing_low") or price
+        gain = pct(anchor, price)
 
-    elif s["mode"]=="hold":
-        gain=pct(s["entry_price"],price)
-        if gain<=DRAWDOWN_RESET:
-            execute_sell("drawdown_reset",price,s)
-        elif gain>=SELL_TARGET:
-            execute_sell("target",price,s)
+        if gain <= DRAWDOWN_RESET:
+            execute_sell("drawdown_reset", price, s)
+        elif gain >= SELL_TARGET:
+            execute_sell("target", price, s)
 
-    elif s["mode"]=="reset":
-        if pullback<=BUY_PULLBACK:
-            s["mode"]="idle"
-            s["buy_approach_sent"]=False
+    elif s["mode"] == "reset":
+        if pullback <= BUY_PULLBACK:
+            s["mode"] = "idle"
 
     save_state(s)
 
-if __name__=="__main__":
+# ------------------------------------------------------------
+# Main
+# ------------------------------------------------------------
+if __name__ == "__main__":
     try:
-        print("Kraken XMR Trader v2.6-XMR tick OK")
+        print(f"Kraken XMR Trader {ENGINE_VERSION} tick OK")
         engine_tick()
     except Exception as e:
-        tg_send(f"❌ Kraken XMR v2.6 runtime error:\n{e}")
-        print(f"[FATAL] {e}")
-        sys.exit(1)
+        msg = str(e)
+
+        if is_rate_limited(msg):
+            print(f"[WARN] Kraken rate-limited: {msg}")
+            time.sleep(60)
+            sys.exit(0)
+
+        tg_send(f"❌ Kraken XMR {ENGINE_VERSION} runtime error:\n{msg}")
+        print(f"[ERROR] {msg}")
+        time.sleep(30)
+        sys.exit(0)

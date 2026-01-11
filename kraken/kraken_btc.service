@@ -9,7 +9,7 @@ User=ubu
 WorkingDirectory=/home/ubu/leo-services/kraken
 
 # 1) Load global 1Password session env
-EnvironmentFile=/home/ubu/leo-services/secrets/global.op.env
+EnvironmentFile=/home/ubu/leo-services/secrets/kraken.op.env
 
 # 2) Load Kraken-specific secret references
 EnvironmentFile=/home/ubu/leo-services/secrets/kraken_trade.op.env
@@ -18,7 +18,8 @@ EnvironmentFile=/home/ubu/leo-services/secrets/kraken_trade.op.env
 ExecStart=/usr/bin/op run -- /usr/bin/python3 /home/ubu/leo-services/kraken/kraken_btc.py
 
 Restart=on-failure
-RestartSec=5
+RestartSec=90
+SuccessExitStatus=1
 
 [Install]
 WantedBy=multi-user.target

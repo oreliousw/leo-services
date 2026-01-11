@@ -35,20 +35,60 @@ from core import (
 HOME = Path.home()
 
 BITCOIN_DIR = HOME / ".bitcoin"
-MONERO_WALLET = Path("/wallets/myVault")
+
+# Correct Monero wallet
+MONERO_WALLET = Path("/home/ubu/wallets/myVault")
+MONERO_BIN = "monero-wallet-cli"
+
+# Correct Bitcoin node config
+BTC_CONF = "/mnt/monero/bitcoin/bitcoin.conf"
 
 # ============================================================
 # Bitcoin / Monero CLI
 # ============================================================
 def bitcoin_cli():
     header()
-    yellow("Launching Bitcoin Core CLI (local node)...\n")
-    run("bitcoin-cli")
+    yellow("Bitcoin Core – Local Node Status\n")
+
+    commands = [
+        ("Node Info",       f"bitcoin-cli -conf={BTC_CONF} getnetworkinfo"),
+        ("Blockchain Info", f"bitcoin-cli -conf={BTC_CONF} getblockchaininfo"),
+        ("Wallet Info",     f"bitcoin-cli -conf={BTC_CONF} getwalletinfo"),
+        ("Balances",        f"bitcoin-cli -conf={BTC_CONF} getbalances"),
+    ]
+
+    for title, cmd in commands:
+        print(f"\n--- {title} ---")
+        try:
+            run(cmd, check=False)
+        except Exception as e:
+            red(f"⚠ Failed: {cmd}")
+            yellow(str(e))
+
+    print("\nTip: You can run manual commands like:")
+    print(f"  bitcoin-cli -conf={BTC_CONF} listtransactions")
+    print(f"  bitcoin-cli -conf={BTC_CONF} getnewaddress")
+    print(f"  bitcoin-cli -conf={BTC_CONF} getwalletinfo")
+    print("\nReturning to menu...\n")
+
 
 def monero_cli():
     header()
     yellow("Launching Monero Wallet CLI (local node)...\n")
-    run("monero-wallet-cli --wallet-file /wallets/myVault")
+
+    if not MONERO_WALLET.exists():
+        red(f"✖ Monero wallet not found: {MONERO_WALLET}")
+        yellow("Check wallet path or restore from backup.")
+        return
+
+    cmd = f"{MONERO_BIN} --wallet-file {MONERO_WALLET}"
+
+    try:
+        run(cmd, check=False)
+    except Exception as e:
+        red("⚠ Monero wallet exited with error")
+        yellow(str(e))
+
 
 # ============================================================
 # Wallet Backup

@@ -22,8 +22,9 @@ ExecStart=/usr/bin/op run \
 StandardOutput=journal
 StandardError=journal
 
-Restart=on-failure
-RestartSec=10
+Restart=no
+SuccessExitStatus=1
+
 
 [Install]
 WantedBy=multi-user.target

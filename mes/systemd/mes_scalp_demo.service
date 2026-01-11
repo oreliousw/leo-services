@@ -13,12 +13,13 @@ ExecStart=/usr/bin/op run \
   --env-file=/opt/mes/env_demo.op.env \
   -- /opt/mes/env_use_demo.sh \
   /opt/mes/venv/bin/python \
-  /opt/mes/mes_scalp.py --risk 0.02
+  /opt/mes/mes_scalp.py
 StandardOutput=journal
 StandardError=journal
 # Resilience: retry on crash
-Restart=on-failure
-RestartSec=10
+Restart=no
+SuccessExitStatus=1
+
 
 [Install]
 WantedBy=multi-user.target
