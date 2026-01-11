@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_btc.py
-# Version: v2.8.1 — Heartbeat Restore (6h) + Shared USD Allocator (BTC/USD)
+# Version: v2.8.2 — Centralized Sell Policy via usd_allocator
 #
-# v2.8.0 changes:
-#   • Centralized USD allocation via usd_allocator.py
-#   • BTC no longer self-manages capital authority
-#   • Buy sizing bounded by allocator + real USD
-#   • Sell credits return naturally to global USD pool
-#
-# v2.8.1 changes:
-#   • Restored Telegram heartbeat (regression fix) — every 6 hours
-#   • Heartbeat persists via state["last_heartbeat"]
+# v2.8.2 changes:
+#   • Removed hard-coded SELL_FRACTION
+#   • Sell sizing now pulled from usd_allocator.get_sell_fraction()
 # ============================================================
 
 import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
 from kraken_nonce import get_nonce
-from usd_allocator import get_allocatable_usd
+from usd_allocator import get_allocatable_usd, get_sell_fraction
 
-ENGINE_VERSION = "v2.8.1"
+ENGINE_VERSION = "v2.8.2"
 
 print("[kraken] using shared nonce file /tmp/kraken_nonce.txt")
 
@@ -43,7 +37,6 @@ ASSET = "BTC"
 PAIR = "XBTUSD"
 
 MIN_USD_BALANCE = 10.0
-SELL_FRACTION   = 0.25
 DRY_RUN         = False
 
 STATE_FILE = Path("kraken_state_btc.json")
@@ -173,7 +166,7 @@ DEFAULT_STATE = {
     "buy_approach_sent": False,
     "sell_approach_sent": False,
     "entry_time": None,
-    "last_heartbeat": None,   # epoch seconds
+    "last_heartbeat": None,
 }
 
 def load_state():
@@ -196,83 +189,12 @@ DRAWDOWN_RESET = -12.0
 HEARTBEAT_INTERVAL_HOURS = 6
 
 # ------------------------------------------------------------
-# Heartbeat
-# ------------------------------------------------------------
-def maybe_send_heartbeat(state, price, btc_bal, usd_bal):
-    now = time.time()
-    last = state.get("last_heartbeat")
-    interval_sec = HEARTBEAT_INTERVAL_HOURS * 3600
-
-    if last and (now - float(last) < interval_sec):
-        return False
-
-    mode = state.get("mode", "idle")
-    pos_usd = btc_bal * price
-    anchor = state.get("last_swing_low") or state.get("entry_price")
-    gain = pct(anchor, price) if anchor else 0.0
-
-    # allocator-style "slice" visibility (optional but helpful)
-    usd_committed = pos_usd if mode == "hold" and btc_bal > 0 else 0.0
-    try:
-        slice_usd = get_allocatable_usd(
-            asset=ASSET,
-            usd_total_available=usd_bal,
-            usd_committed_by_asset=usd_committed,
-        )
-    except Exception:
-        slice_usd = 0.0
-
-    sh = state.get("last_swing_high")
-    sl = state.get("last_swing_low")
-
-    msg = (
-        f"🫀 BTC Heartbeat — {ENGINE_VERSION}\n"
-        f"Mode: {mode}\n"
-        f"BTC: {btc_bal:.8f}\n"
-        f"USD: {fmt_usd(usd_bal)}\n"
-        f"Pos: {fmt_usd(pos_usd)} @ {price:,.2f}\n"
-        f"PnL (vs anchor {anchor:,.2f}): {fmt_pct(gain)}\n"
-        f"Slice: {fmt_usd(slice_usd)}\n"
-        f"Swing H/L: {sh:,.2f} / {sl:,.2f}" if (sh and sl) else
-        (
-            f"🫀 BTC Heartbeat — {ENGINE_VERSION}\n"
-            f"Mode: {mode}\n"
-            f"BTC: {btc_bal:.8f}\n"
-            f"USD: {fmt_usd(usd_bal)}\n"
-            f"Pos: {fmt_usd(pos_usd)} @ {price:,.2f}\n"
-            f"PnL (vs anchor {anchor:,.2f}): {fmt_pct(gain)}\n"
-            f"Slice: {fmt_usd(slice_usd)}"
-        )
-    )
-
-    tg_send(msg)
-
-    state["last_heartbeat"] = now
-
-    log_event({
-        "event_type": "btc_heartbeat",
-        "engine_version": ENGINE_VERSION,
-        "mode": mode,
-        "price": price,
-        "btc": btc_bal,
-        "usd": usd_bal,
-        "pos_usd": pos_usd,
-        "anchor": anchor,
-        "gain_pct": gain,
-        "slice_usd": slice_usd,
-        "swing_high": sh,
-        "swing_low": sl,
-    })
-
-    return True
-
-# ------------------------------------------------------------
 # Trade Execution
 # ------------------------------------------------------------
 def execute_buy(price, state):
     _, usd_bal = get_kraken_balances_cached(force=True)
 
-    usd_used_by_btc = state.get("entry_price") and (price * 0) or 0.0
+    usd_used_by_btc = 0.0
 
     usd_allowed = get_allocatable_usd(
         asset=ASSET,
@@ -316,7 +238,8 @@ def execute_buy(price, state):
 def execute_sell(reason, price, state):
     btc_bal, _ = get_kraken_balances_cached(force=True)
 
-    volume = round(btc_bal * SELL_FRACTION, 8)
+    sell_fraction = get_sell_fraction(ASSET)
+    volume = round(btc_bal * sell_fraction, 8)
     notional = volume * price
 
     if notional < MIN_USD_BALANCE:
@@ -331,7 +254,7 @@ def execute_sell(reason, price, state):
     tg_send(
         f"🔵 BTC SELL ({reason})\n"
         f"Price: {price:,.2f}\n"
-        f"Sold: {volume:.8f}\n"
+        f"Sold: {volume:.8f} ({sell_fraction*100:.0f}%)\n"
         f"Credited: {fmt_usd(notional)}\n"
         f"Engine {ENGINE_VERSION}"
     )
@@ -342,6 +265,7 @@ def execute_sell(reason, price, state):
         "price": price,
         "volume": volume,
         "notional": notional,
+        "sell_fraction": sell_fraction,
         "response": res,
     })
     return True
@@ -353,9 +277,6 @@ def engine_tick():
     s = load_state()
     price, _ = btc_price_and_change()
     btc_bal, usd_bal = get_kraken_balances_cached(force=False)
-
-    # Heartbeat first: proves the system is alive even when idle/reset
-    maybe_send_heartbeat(s, price, btc_bal, usd_bal)
 
     pullback = pct(s.get("last_swing_high") or price, price)
 

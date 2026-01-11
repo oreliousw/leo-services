@@ -6,6 +6,7 @@
 # Responsibilities:
 #   • Bitcoin CLI access (local node)
 #   • Monero CLI wallet access (local node)
+#   • Solana CLI wallet access
 #   • Encrypted wallet backup (1Password-friendly)
 #   • Restore verification (NON-DESTRUCTIVE)
 #
@@ -35,60 +36,34 @@ from core import (
 HOME = Path.home()
 
 BITCOIN_DIR = HOME / ".bitcoin"
-
-# Correct Monero wallet
-MONERO_WALLET = Path("/home/ubu/wallets/myVault")
-MONERO_BIN = "monero-wallet-cli"
-
-# Correct Bitcoin node config
-BTC_CONF = "/mnt/monero/bitcoin/bitcoin.conf"
+MONERO_WALLET = HOME / "wallets" / "myVault"
+SOLANA_KEYPAIR = HOME / "wallets" / "solana" / "id.json"
 
 # ============================================================
-# Bitcoin / Monero CLI
+# Bitcoin / Monero / Solana CLI
 # ============================================================
 def bitcoin_cli():
     header()
-    yellow("Bitcoin Core – Local Node Status\n")
-
-    commands = [
-        ("Node Info",       f"bitcoin-cli -conf={BTC_CONF} getnetworkinfo"),
-        ("Blockchain Info", f"bitcoin-cli -conf={BTC_CONF} getblockchaininfo"),
-        ("Wallet Info",     f"bitcoin-cli -conf={BTC_CONF} getwalletinfo"),
-        ("Balances",        f"bitcoin-cli -conf={BTC_CONF} getbalances"),
-    ]
-
-    for title, cmd in commands:
-        print(f"\n--- {title} ---")
-        try:
-            run(cmd, check=False)
-        except Exception as e:
-            red(f"⚠ Failed: {cmd}")
-            yellow(str(e))
-
-    print("\nTip: You can run manual commands like:")
-    print(f"  bitcoin-cli -conf={BTC_CONF} listtransactions")
-    print(f"  bitcoin-cli -conf={BTC_CONF} getnewaddress")
-    print(f"  bitcoin-cli -conf={BTC_CONF} getwalletinfo")
-    print("\nReturning to menu...\n")
-
+    yellow("Launching Bitcoin Core CLI (local node)...\n")
+    run("bitcoin-cli")
 
 def monero_cli():
     header()
     yellow("Launching Monero Wallet CLI (local node)...\n")
+    run(f"monero-wallet-cli --wallet-file {MONERO_WALLET}")
 
-    if not MONERO_WALLET.exists():
-        red(f"✖ Monero wallet not found: {MONERO_WALLET}")
-        yellow("Check wallet path or restore from backup.")
+def solana_cli():
+    header()
+    yellow("Launching Solana CLI wallet...\n")
+
+    if not SOLANA_KEYPAIR.exists():
+        red(f"✖ Solana keypair not found: {SOLANA_KEYPAIR}")
+        yellow("Create one with:")
+        print(f"  solana-keygen new --outfile {SOLANA_KEYPAIR}")
         return
 
-    cmd = f"{MONERO_BIN} --wallet-file {MONERO_WALLET}"
-
-    try:
-        run(cmd, check=False)
-    except Exception as e:
-        red("⚠ Monero wallet exited with error")
-        yellow(str(e))
-
+    run(f"solana config set --keypair {SOLANA_KEYPAIR}")
+    run("solana")
 
 # ============================================================
 # Wallet Backup
@@ -116,6 +91,13 @@ def wallets_backup():
         green(f"✔ Monero wallet detected: {MONERO_WALLET}")
     else:
         yellow("⚠ Monero wallet not found")
+
+    # ---------------- Solana ----------------
+    if SOLANA_KEYPAIR.exists():
+        backup_items.append(SOLANA_KEYPAIR)
+        green(f"✔ Solana keypair detected: {SOLANA_KEYPAIR}")
+    else:
+        yellow("⚠ Solana keypair not found")
 
     if not backup_items:
         red("✖ No wallets found to back up")
@@ -147,6 +129,7 @@ def wallets_backup():
                 f"Backup date: {today}\n"
                 f"Bitcoin dir: {btc_wallets if btc_wallets.exists() else 'N/A'}\n"
                 f"Monero wallet: {MONERO_WALLET if MONERO_WALLET.exists() else 'N/A'}\n"
+                f"Solana keypair: {SOLANA_KEYPAIR if SOLANA_KEYPAIR.exists() else 'N/A'}\n"
             )
             tar.add(meta, arcname="RESTORE_INFO.txt")
 
@@ -219,6 +202,12 @@ def restore_verify():
         else:
             yellow("⚠ Monero wallet or keys missing")
 
+        solana_key = Path(tmpdir) / SOLANA_KEYPAIR.name
+        if solana_key.exists():
+            green("✔ Solana keypair detected")
+        else:
+            yellow("⚠ Solana keypair missing")
+
         if ok:
             green("\n✔ Backup integrity verification PASSED")
         else:
@@ -236,9 +225,10 @@ def handle(args):
         print("LEO ▸ WALLETS\n")
         print(" 1) Bitcoin Wallet CLI")
         print(" 2) Monero Wallet CLI")
-        print(" 3) Backup wallets (encrypted)")
-        print(" 4) Restore verify backup")
-        print(" 5) Return\n")
+        print(" 3) Solana Wallet CLI")
+        print(" 4) Backup wallets (encrypted)")
+        print(" 5) Restore verify backup")
+        print(" 6) Return\n")
 
         sel = input("Select option: ").strip()
 
@@ -247,8 +237,10 @@ def handle(args):
         elif sel == "2":
             monero_cli()
         elif sel == "3":
-            wallets_backup()
+            solana_cli()
         elif sel == "4":
+            wallets_backup()
+        elif sel == "5":
             restore_verify()
         return
 

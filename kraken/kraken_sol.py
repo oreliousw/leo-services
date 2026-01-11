@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 # ============================================================
 # File: kraken_sol.py
-# Version: v2.8.1 — Heartbeat Restore (6h) + Shared USD Allocator (SOL/USD)
+# Version: v2.8.2 — Centralized Sell Policy via usd_allocator
 #
-# v2.8.0 changes:
-#   • Centralized USD allocation via usd_allocator.py
-#   • SOL no longer self-manages capital authority
-#   • Buy sizing bounded by allocator + real USD
-#   • Sell credits return naturally to global USD pool
-#   • Handles SOL / XSOL balances safely
-#
-# v2.8.1 changes:
-#   • Restored Telegram heartbeat (regression fix) — every 6 hours
-#   • Heartbeat persists via state["last_heartbeat"]
+# v2.8.2 changes:
+#   • Removed hard-coded SELL_FRACTION
+#   • Sell sizing now pulled from usd_allocator.get_sell_fraction()
 # ============================================================
 
 import os, sys, json, time, base64, hmac, hashlib, urllib.request
 from pathlib import Path
 from datetime import datetime
 from kraken_nonce import get_nonce
-from usd_allocator import get_allocatable_usd
+from usd_allocator import get_allocatable_usd, get_sell_fraction
 
-ENGINE_VERSION = "v2.8.1"
+ENGINE_VERSION = "v2.8.2"
 
 print("[kraken] using shared nonce file /tmp/kraken_nonce.txt")
 
@@ -44,7 +37,6 @@ ASSET = "SOL"
 PAIR  = "SOLUSD"
 
 MIN_USD_BALANCE = 10.0
-SELL_FRACTION   = 0.25
 DRY_RUN         = False
 
 STATE_FILE = Path("kraken_state_sol.json")
@@ -266,12 +258,10 @@ def maybe_send_heartbeat(state, price, sol_bal, usd_bal):
 def execute_buy(price, state):
     _, usd_bal = get_balances(force=True)
 
-    usd_committed = 0.0
-
     usd_allowed = get_allocatable_usd(
         asset=ASSET,
         usd_total_available=usd_bal,
-        usd_committed_by_asset=usd_committed,
+        usd_committed_by_asset=0.0,
     )
 
     if usd_allowed < MIN_USD_BALANCE:
@@ -308,7 +298,8 @@ def execute_buy(price, state):
 def execute_sell(reason, price, state):
     sol, _ = get_balances(force=True)
 
-    volume = round(sol * SELL_FRACTION, 8)
+    sell_fraction = get_sell_fraction(ASSET)
+    volume = round(sol * sell_fraction, 8)
     notional = volume * price
 
     if notional < MIN_USD_BALANCE:
@@ -323,7 +314,7 @@ def execute_sell(reason, price, state):
     tg_send(
         f"🔵 SOL SELL ({reason})\n"
         f"Price: {price:,.2f}\n"
-        f"Sold: {volume:.8f}\n"
+        f"Sold: {volume:.8f} ({sell_fraction*100:.0f}%)\n"
         f"Credited: {fmt_usd(notional)}\n"
         f"Engine {ENGINE_VERSION}"
     )
@@ -334,6 +325,7 @@ def execute_sell(reason, price, state):
         "price": price,
         "volume": volume,
         "notional": notional,
+        "sell_fraction": sell_fraction,
         "response": res,
     })
     return True
