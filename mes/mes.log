@@ -256,3 +256,17 @@
 [2026-01-09 22:00:06,502] INFO: MES cycle invoked by systemd timer
 [2026-01-09 22:00:07,510] INFO: EUR_USD: continuation conditions met
 [2026-01-09 22:00:11,145] INFO: MES cycle completed normally
+[2026-01-11 17:08:43,369] INFO: [MES] MES v3.5.99 DEMO starting cycle
+[2026-01-11 17:08:43,369] INFO: MES cycle invoked by systemd timer
+[2026-01-11 17:08:46,283] INFO: EUR_USD: continuation conditions met
+[2026-01-11 17:08:47,496] INFO: AUD_USD: continuation conditions met
+[2026-01-11 17:08:48,382] INFO: NZD_USD: continuation conditions met
+[2026-01-11 17:08:49,599] INFO: USD_CHF: continuation conditions met
+[2026-01-11 17:08:50,413] INFO: EUR_GBP: continuation conditions met
+[2026-01-11 17:08:50,413] INFO: MES cycle completed normally
+[2026-01-11 17:09:58,290] INFO: [MES] MES v3.5.99 LIVE starting cycle
+[2026-01-11 17:09:58,290] INFO: MES cycle invoked by systemd timer
+[2026-01-11 17:09:59,385] INFO: EUR_USD: continuation conditions met
+[2026-01-11 17:10:01,399] INFO: NZD_USD: continuation conditions met
+[2026-01-11 17:10:02,587] INFO: USD_CHF: continuation conditions met
+[2026-01-11 17:10:03,406] INFO: MES cycle completed normally
